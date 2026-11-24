@@ -50,6 +50,87 @@
   const lessonById = id => LESSONS.find(l => l.id === id);
   const badge = lvl => `<span class="ev ev-${lvl}">${EVIDENCE[lvl].icon} ${EVIDENCE[lvl].label}</span>`;
 
+  // ---------- plateforme, version et mises à jour ----------
+  const BUILD = window.TALKING_BUILD || { version: '0.0.0-dev', repo: 'DSQZRuRu/talking' };
+  const isNative = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  const APK_URL = `https://github.com/${BUILD.repo}/releases/latest/download/talking.apk`;
+  const RELEASES_URL = `https://github.com/${BUILD.repo}/releases/latest`;
+  // Compare « 1.0.12 » et « 1.0.9 » numériquement ; ignore un éventuel préfixe « v ».
+  function newer(a, b) {
+    const pa = String(a).replace(/^v/, '').split(/[.-]/).map(Number), pb = String(b).replace(/^v/, '').split(/[.-]/).map(Number);
+    for (let i = 0; i < 3; i++) { const x = pa[i] || 0, y = pb[i] || 0; if (Number.isNaN(x) || Number.isNaN(y)) return false; if (x !== y) return x > y; }
+    return false;
+  }
+  let latestRelease = null; // { version, url }
+  async function checkUpdate() {
+    try {
+      const r = await fetch(`https://api.github.com/repos/${BUILD.repo}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+      if (!r.ok) return;
+      const j = await r.json();
+      const asset = (j.assets || []).find(a => /\.apk$/i.test(a.name));
+      latestRelease = { version: j.tag_name.replace(/^v/, ''), url: asset ? asset.browser_download_url : APK_URL };
+      showBanner();
+    } catch { /* hors ligne ou dépôt privé : on garde le lien direct */ }
+  }
+  function showBanner() {
+    const $b = document.getElementById('banner');
+    let html = '';
+    if (isNative()) {
+      if (latestRelease && newer(latestRelease.version, BUILD.version)) {
+        html = `<span>🆕 Version ${esc(latestRelease.version)} disponible <small>(tu as ${esc(BUILD.version)})</small></span><a class="bbtn" href="${esc(latestRelease.url)}">Télécharger</a>`;
+      }
+    } else {
+      let hidden = false; try { hidden = localStorage.getItem('talking.banner.hidden') === '1'; } catch { }
+      if (!hidden) html = `<span>📱 L'app Android${latestRelease ? ` <small>v${esc(latestRelease.version)}</small>` : ''}</span><a class="bbtn" href="${esc(latestRelease ? latestRelease.url : APK_URL)}">Télécharger l'APK</a><button class="bx" aria-label="Masquer">✕</button>`;
+    }
+    $b.innerHTML = html; $b.hidden = !html;
+    document.body.classList.toggle('has-banner', !!html);
+    const x = $b.querySelector('.bx');
+    if (x) x.onclick = () => { try { localStorage.setItem('talking.banner.hidden', '1'); } catch { } showBanner(); };
+  }
+
+  // Reconnaissance vocale native (Android) exposée avec la même interface que webkitSpeechRecognition.
+  // Le moteur Android s'arrête à chaque silence : on enchaîne les segments jusqu'à stop().
+  function nativeSpeechClass() {
+    const P = isNative() && window.capacitorSpeechRecognition && window.capacitorSpeechRecognition.SpeechRecognition;
+    if (!P) return null;
+    return class NativeSR {
+      constructor() { this.lang = 'fr-FR'; this.active = false; this.cur = ''; this.handles = []; }
+      emit(final) {
+        if (!this.cur) return;
+        this.onresult && this.onresult({ resultIndex: 0, results: [{ 0: { transcript: this.cur }, isFinal: final }] });
+        if (final) this.cur = '';
+      }
+      async start() {
+        this.active = true;
+        try {
+          const perm = await P.requestPermissions();
+          if (perm && perm.speechRecognition && perm.speechRecognition !== 'granted') { this.active = false; this.onerror && this.onerror({ error: 'not-allowed' }); return; }
+        } catch { }
+        this.handles.push(await P.addListener('partialResults', d => { const m = d && d.matches && d.matches[0]; if (m) { this.cur = m; this.emit(false); } }));
+        this.handles.push(await P.addListener('listeningState', d => { if (d && d.status === 'stopped') this.emit(true); }));
+        this.segment();
+        this.poll = setInterval(async () => {
+          if (!this.active) return;
+          try { const { listening } = await P.isListening(); if (!listening) { this.emit(true); this.segment(); } } catch { }
+        }, 1200);
+      }
+      async segment() {
+        if (!this.active || this.starting) return;
+        this.starting = true;
+        try { await P.start({ language: this.lang, maxResults: 1, partialResults: true, popup: false }); } catch { }
+        this.starting = false;
+      }
+      stop() {
+        this.active = false; clearInterval(this.poll);
+        this.emit(true);
+        try { P.stop(); } catch { }
+        this.handles.forEach(h => { try { h.remove(); } catch { } }); this.handles = [];
+        this.onend = null;
+      }
+    };
+  }
+
   function bump(skill, n) { const L = state.profile.levels; L[skill] = clamp((L[skill] || 0) + n, 0, 100); }
   function overall() { const L = state.profile.levels; const ks = Object.keys(SKILLS); return Math.round(avg(ks.map(k => L[k] || 0))); }
   function weakest() { const L = state.profile.levels; return Object.keys(SKILLS).sort((a, b) => L[a] - L[b]); }
@@ -626,8 +707,10 @@
   }
 
   function StepSpeak(S, st) {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const canRec = !!(navigator.mediaDevices && window.MediaRecorder);
+    const NSR = nativeSpeechClass();
+    const SR = NSR || window.SpeechRecognition || window.webkitSpeechRecognition;
+    // Sur Android, le moteur vocal et l'enregistreur se disputent le micro : on privilégie l'analyse vocale.
+    const canRec = !NSR && !!(navigator.mediaDevices && window.MediaRecorder);
     render(frame(S, `
       <p class="step">🎙️ Parle 60 secondes</p>
       <h2>${esc(st.prompt.t)}</h2>
@@ -836,6 +919,7 @@
         ${journal.length ? `<div class="card"><b>Journal des défis</b><ul class="journal">${journal.map(m => `<li><span>${m.status === 'done' ? '✅' : '⏭️'}</span><div>${esc(m.t)}${m.status === 'done' ? `<small>Prévu ${m.predOk}/10 → réel ${m.ok}/10 · stress ${m.predAnx} → ${m.anx}</small>` : '<small>Non réalisé</small>'}${m.note ? `<small><i>« ${esc(m.note)} »</i></small>` : ''}</div></li>`).join('')}</ul></div>` : ''}
         <div class="list">
           <button class="row" id="plan"><span class="em">🗺️</span><div><b>Mon plan</b><small>Profil et 4 semaines</small></div>›</button>
+          <a class="row" id="apk" href="${esc(latestRelease ? latestRelease.url : APK_URL)}"><span class="em">📲</span><div><b>${isNative() ? 'Télécharger la dernière version' : 'Télécharger l\'app Android'}</b><small>${isNative() ? `Version installée : ${esc(BUILD.version)}` : 'Fichier APK à installer sur ton téléphone'}${latestRelease ? ` · dernière : ${esc(latestRelease.version)}` : ''}</small></div>›</a>
           <button class="row" id="src"><span class="em">📚</span><div><b>Sources et méthode</b><small>Toutes les études citées</small></div>›</button>
           <button class="row" id="retake"><span class="em">🔁</span><div><b>Refaire le test</b><small>Recalcule ton profil (efface la progression)</small></div>›</button>
           <button class="row danger" id="reset"><span class="em">🗑️</span><div><b>Tout effacer</b><small>Supprime tes données de cet appareil</small></div>›</button>
@@ -878,6 +962,9 @@
   }
 
   // ---------- démarrage ----------
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
+  // Pas de service worker dans l'app native : les fichiers viennent de l'APK, un cache web servirait d'anciennes versions.
+  if (!isNative() && 'serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
+  showBanner();
+  checkUpdate();
   state.profile ? Home() : Welcome();
 })();

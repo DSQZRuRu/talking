@@ -1,0 +1,63 @@
+name: APK Android
+
+# À chaque push : compile l'APK et le publie dans une Release GitHub (v1.0.<numéro de build>).
+# Le lien https://github.com/<dépôt>/releases/latest/download/talking.apk pointe toujours vers la dernière.
+on:
+  push:
+    paths-ignore: ['README.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      APP_VERSION: 1.0.${{ github.run_number }}
+      APP_VERSION_CODE: ${{ github.run_number }}
+      APP_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Préparer l'app web et synchroniser Android
+        run: npm run build && npx cap sync android
+
+      - name: Compiler l'APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/talking.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: talking-${{ env.APP_VERSION }}
+          path: talking.apk
+
+      - name: Publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$APP_VERSION" talking.apk \
+            --target "$GITHUB_SHA" \
+            --title "Talking $APP_VERSION" \
+            --notes "APK compilé automatiquement depuis ${GITHUB_SHA::7} (branche ${GITHUB_REF_NAME}). Télécharger talking.apk ci-dessous, puis l'ouvrir sur le téléphone." \
+            --latest

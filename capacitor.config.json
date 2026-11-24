@@ -1,0 +1,6 @@
+{
+  "appId": "app.talking.coach",
+  "appName": "Talking",
+  "webDir": "www",
+  "android": { "allowMixedContent": false }
+}

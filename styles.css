@@ -200,3 +200,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--primary); }
 textarea { margin-bottom: 4px; }
 .mini { grid-template-columns: 1fr 1fr 1fr; }
 @media (max-width: 380px) { .mini { grid-template-columns: 1fr 1fr; } .scale button span { display: none; } }
+
+/* ---- bandeau de téléchargement / mise à jour ---- */
+#banner { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 10px; padding: 10px 16px; padding-top: calc(10px + env(safe-area-inset-top)); background: linear-gradient(90deg, #3b2fa8, #6c5ce7); color: #fff; font-size: .9rem; box-shadow: 0 4px 16px #0006; }
+#banner[hidden] { display: none; }
+#banner span { flex: 1; }
+#banner small { opacity: .8; }
+#banner .bbtn { background: #fff; color: #3b2fa8; font-weight: 700; padding: 8px 12px; border-radius: 10px; text-decoration: none; white-space: nowrap; }
+#banner .bx { background: none; border: 0; color: #fff; font-size: 1rem; cursor: pointer; padding: 4px; opacity: .8; }
+a.row { text-decoration: none; }

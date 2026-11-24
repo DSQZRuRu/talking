@@ -34,3 +34,13 @@ Aucune dépendance. Déployable tel quel sur GitHub Pages, Netlify, Vercel… La
 - `app.js` – logique (onboarding, séance, progression)
 - `styles.css` – thème mobile
 - `sw.js`, `manifest.json` – installation hors-ligne
+
+## App Android (APK)
+- **Télécharger la dernière version** : https://github.com/DSQZRuRu/talking/releases/latest/download/talking.apk
+- Chaque push déclenche `.github/workflows/android.yml` : il compile l'APK (Capacitor 7) et le publie dans une Release `v1.0.<n>`.
+- Dans l'app web, un bandeau propose de télécharger l'APK. Dans l'app Android, un bandeau apparaît quand une version plus récente existe, et le Profil propose toujours « Télécharger la dernière version ».
+- Toutes les versions sont signées avec la même clé (`android/app/talking.keystore`, mot de passe dans `android/app/build.gradle`), donc une nouvelle version s'installe par-dessus l'ancienne sans perdre la progression. Clé adaptée à une diffusion directe d'APK, pas au Play Store.
+- Sur Android, « Parle 60 s » utilise la reconnaissance vocale du téléphone (plugin `@capacitor-community/speech-recognition`) ; la réécoute de l'enregistrement n'est disponible que dans la version web.
+- ⚠️ Si le dépôt est privé, le lien de téléchargement ne marche que pour un compte GitHub connecté qui a accès au dépôt, et l'app ne peut pas détecter les nouvelles versions.
+
+Compiler en local : `npm install && npm run android`, puis `cd android && ./gradlew assembleRelease` (nécessite le SDK Android).
