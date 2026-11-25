@@ -2,7 +2,7 @@
   "appId": "app.talking.coach",
   "appName": "Talking",
   "webDir": "www",
-  "backgroundColor": "#f5f1ea",
+  "backgroundColor": "#eceffa",
   "android": {
     "allowMixedContent": false,
     "adjustMarginsForEdgeToEdge": "auto"

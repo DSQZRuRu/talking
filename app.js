@@ -249,6 +249,12 @@
       <section class="screen welcome">
         <p class="wordmark">talking<i>.</i></p>
         <h1 class="display">Arrête de parler de la <span class="strike">météo<svg viewBox="0 0 120 20" preserveAspectRatio="none"><path d="M3 13c18-5 36-8 57-7s40 3 57-1"/></svg></span>.</h1>
+        <div class="demo" aria-label="Exemple de conversation">
+          <div class="bubble them">Grosse journée&nbsp;?</div>
+          <div class="bubble me flat">Ouais… drôle de temps, hein&nbsp;?</div>
+          <p class="demo-label">Après quelques séances</p>
+          <div class="bubble me">Trois réunions et zéro café, je survis. Et toi, ta journée&nbsp;?</div>
+        </div>
         <p class="lead">Tu n'es pas mauvais avec les gens. Tu bloques, c'est tout. Ça s'entraîne, quelques minutes par jour, avec des techniques issues de la recherche en psychologie.</p>
         <ol class="steps">
           <li><span>01</span><div><b>Apprendre</b><p>Une technique validée, expliquée en 2 minutes, sources à l'appui.</p></div></li>
@@ -448,10 +454,10 @@
         <div class="week">${week.map(d => `<div class="${d.on ? 'on' : ''} ${d.t ? 'is-today' : ''}"><span>${d.l}</span><i>${d.on ? ic('check') : d.n}</i></div>`).join('')}</div>
         ${pm ? missionCard(pm) : ''}
         <article class="today ${doneToday ? 'done' : ''}">
-          <div class="today-top">${label(SKILL_IC[lesson.skill], doneToday ? 'Séance faite aujourd\'hui' : `Séance du jour · ${SKILLS[lesson.skill].name}`)}${evTag(lesson.level)}</div>
+          <div class="today-top">${label(SKILL_IC[lesson.skill], doneToday ? 'Séance faite aujourd\'hui' : `Séance du jour · ~${p.minutes} min`)}${evTag(lesson.level)}</div>
           <h2 class="today-title">${esc(lesson.title)}</h2>
-          <ul class="agenda">${plan.map(([i, t, d]) => `<li>${ic(i)}<span>${t}</span><small>${d}</small></li>`).join('')}</ul>
-          <button class="btn ${doneToday ? 'secondary' : 'primary'}" id="go">${doneToday ? 'Refaire une séance' : 'Commencer'}${ic('right')}</button>
+          <ul class="pills">${plan.map(([i, t]) => `<li>${ic(i)}${t}</li>`).join('')}</ul>
+          <button class="btn ${doneToday ? 'secondary' : 'invert'}" id="go">${doneToday ? 'Refaire une séance' : 'C\'est parti'}${ic('right')}</button>
         </article>
         ${predictionCard()}
         <div class="stats">${stat(overall(), 'Score')}${stat(doneMissions().length, 'Défis réussis')}${stat(`${pr.lessonsDone.length}<small>/${LESSONS.length}</small>`, 'Leçons')}</div>
@@ -781,7 +787,12 @@
     return { n, found };
   }
 
-  const RING = 2 * Math.PI * 54;
+  // Met en évidence les mots-béquilles dans la transcription en direct.
+  function highlightFillers(text) {
+    let out = esc(text);
+    for (const f of FILLERS) out = out.replace(new RegExp(`(?<![\\p{L}'])(${f.pat})(?![\\p{L}])`, 'giu'), '<mark>$1</mark>');
+    return out;
+  }
   function StepSpeak(S, st) {
     const NSR = nativeSpeechClass();
     const SR = NSR || window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -792,11 +803,10 @@
       <h2 class="title">${esc(st.prompt.t)}</h2>
       <p class="tip">${ic('bulb')}<span>${esc(st.prompt.tip)}</span></p>
       <div class="mic">
-        <button id="mic" class="mic-btn" aria-label="Démarrer l'enregistrement">
-          <svg class="ring" viewBox="0 0 120 120"><circle cx="60" cy="60" r="54" class="ring-bg"/><circle cx="60" cy="60" r="54" class="ring-fg" id="ring" style="stroke-dasharray:${RING};stroke-dashoffset:${RING}"/></svg>
-          <span class="mic-core" id="micic">${ic('mic')}</span>
-        </button>
+        <div class="wave" id="wave" aria-hidden="true">${[30, 55, 80, 45, 95, 60, 35, 70, 50, 85, 40, 25].map((h, k) => `<i style="height:${h}%;animation-delay:${(k % 5) * .09}s"></i>`).join('')}</div>
         <p class="timer" id="t">1:00</p>
+        <div class="timebar"><i id="ring"></i></div>
+        <button id="mic" class="mic-btn" aria-label="Démarrer l'enregistrement"><span class="mic-core" id="micic">${ic('mic')}</span></button>
         <p class="note center" id="mhint">Appuie pour commencer. Quand tu cherches tes mots, fais une pause plutôt qu'un « euh ».</p>
       </div>
       ${SR ? '' : '<p class="note center">Reconnaissance vocale indisponible sur ce navigateur (essaie Chrome, Edge ou Safari) : tu compteras tes « euh » toi-même.</p>'}
@@ -811,7 +821,7 @@
       const secs = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
       clearInterval(speakTimer);
       if (rec) { try { rec.onend = null; rec.stop(); } catch { } rec = null; }
-      $('#mic').classList.remove('rec'); $('#mic').disabled = true; $('#micic').innerHTML = ic('check');
+      $('#mic').classList.remove('rec'); $('#wave').classList.remove('on'); $('#mic').disabled = true; $('#micic').innerHTML = ic('check');
       $('#mhint').textContent = 'Terminé.';
       $('#skip')?.remove();
       const afterAudio = url => {
@@ -829,7 +839,7 @@
     on('#mic', 'click', async () => {
       if (running) { finish(); return; }
       running = true; startedAt = Date.now(); buzz(10);
-      $('#mic').classList.add('rec'); $('#micic').innerHTML = ic('stop'); $('#mhint').textContent = 'Appuie pour arrêter.';
+      $('#mic').classList.add('rec'); $('#wave').classList.add('on'); $('#micic').innerHTML = ic('stop'); $('#mhint').textContent = 'Appuie pour arrêter.';
       if (canRec) {
         try {
           mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -845,7 +855,7 @@
           for (let i = ev.resultIndex; i < ev.results.length; i++) {
             const r = ev.results[i]; if (r.isFinal) transcript += ' ' + r[0].transcript; else interim += r[0].transcript;
           }
-          $live.textContent = (transcript + ' ' + interim).trim().split(/\s+/).slice(-22).join(' ');
+          $live.innerHTML = highlightFillers((transcript + ' ' + interim).trim().split(/\s+/).slice(-22).join(' '));
         };
         rec.onerror = () => { };
         rec.onend = () => { if (running && rec) { try { rec.start(); } catch { } } };
@@ -853,10 +863,9 @@
       }
       speakTimer = setInterval(() => {
         left--; $t.textContent = fmt(Math.max(0, left));
-        $ring.style.strokeDashoffset = RING * (left / 60);
+        $ring.style.width = `${((60 - left) / 60) * 100}%`;
         if (left <= 0) finish();
       }, 1000);
-      $ring.style.strokeDashoffset = RING * (59.5 / 60);
     });
     on('#skip', 'click', () => { stopAudio(); next(S); });
   }
@@ -939,7 +948,7 @@
     const st = state.progress.streak, pm = pendingMission();
     render(`
       <section class="screen result">
-        <span class="result-ic big">${ic('flame')}</span>
+        <span class="result-ic big">${ic('flame')}<b>${state.progress.streak}</b></span>
         <h1 class="display">Séance terminée.</h1>
         <p class="lead">${S.correct} bonne${S.correct > 1 ? 's' : ''} réponse${S.correct > 1 ? 's' : ''} sur ${S.total}, en ${fmt(secs)}.</p>
         <div class="stats">${stat(st, st > 1 ? 'jours d\'affilée' : 'jour d\'affilée')}${stat('+' + S.xp, 'points')}${stat(overall(), 'score')}</div>
