@@ -607,3 +607,70 @@ const MISSIONS = [
 ];
 
 const DISCLAIMER = 'Talking est un outil d\'entraînement, pas un traitement. Si le trac social t\'empêche de vivre normalement (éviter des situations importantes, souffrance importante), parles-en à ton médecin ou à un psychologue : les thérapies cognitives et comportementales (TCC) sont le traitement de référence et sont efficaces.';
+
+// ---------------- Avant un événement ----------------
+// Préparation express (~3 min) juste avant un moment important. Chaque fiche réutilise
+// des techniques des leçons : `lesson` pointe vers la leçon qui l'explique.
+const EVENTS = [
+  {
+    id: 'entretien', icon: 'briefcase', t: 'Un entretien', sub: 'Embauche, stage, évaluation',
+    key: { label: 'Ta présentation en une phrase', ph: 'Ex. : Je suis chef de projet, je lance des produits vite, et je cherche une équipe plus grande.' },
+    tips: [
+      { h: '« Parlez-moi de vous » en 3 phrases', p: 'Qui tu es aujourd\'hui, une preuve concrète, ce que tu cherches. Pas ta biographie depuis le lycée.', lesson: 'cl-conclusion' },
+      { h: 'Chaque réponse en PREP', p: 'Point, raison, exemple chiffré, point. Si on te prend au dépourvu, commence par ta conclusion.', lesson: 'cl-prep' },
+      { h: 'Deux questions à leur poser', p: '« Qu\'est-ce qui distingue quelqu\'un qui réussit vraiment à ce poste ? » et « Quel est le plus gros défi de l\'équipe en ce moment ? »', lesson: 'as-conseil' },
+      { h: 'Ta nervosité se voit peu', p: 'Les recruteurs perçoivent bien moins ton stress que tu ne le crois. Une pause d\'une respiration avant de répondre te fait paraître posé·e.', lesson: 'as-transparence' },
+    ],
+  },
+  {
+    id: 'reunion', icon: 'users', t: 'Une réunion', sub: 'Présentation, prise de parole',
+    key: { label: 'Le point que tu veux faire passer', ph: 'Ex. : On devrait décaler le lancement au 15 pour finir les tests.' },
+    tips: [
+      { h: 'Conclusion d\'abord', p: 'Ton point en une phrase, puis la raison. Si on ne t\'écoutait que 10 secondes, on aurait compris l\'essentiel.', lesson: 'cl-conclusion' },
+      { h: 'Parle tôt', p: 'Plus tu attends le moment parfait, plus le trac monte. Prends la parole dans les premières minutes, même pour une question.', lesson: 'as-securite' },
+      { h: 'Reformule avant de contredire', p: '« Si je comprends bien, tu proposes… ? » L\'autre se sent compris, et ton désaccord passe beaucoup mieux.', lesson: 'ec-reformuler' },
+      { h: 'Des pauses, pas des « euh »', p: 'Une pause à la fin de chaque idée lui donne du poids et te laisse le temps de trouver la suite.', lesson: 'cl-pause' },
+    ],
+  },
+  {
+    id: 'rdv', icon: 'heart', t: 'Un rendez-vous', sub: 'Premier date, verre, rencontre',
+    key: { label: 'Une question que tu as vraiment envie de lui poser', ph: 'Ex. : Qu\'est-ce qui t\'a donné envie de faire ce métier ?' },
+    tips: [
+      { h: 'Des questions de relance', p: 'Rebondis sur ce qu\'il ou elle vient de dire. En speed dating, ceux qui en posaient plus obtenaient plus de seconds rendez-vous.', lesson: 'st-questions' },
+      { h: 'Donne autant que tu demandes', p: 'Une info vraie sur toi, puis une question en retour. Le ping-pong crée le lien, pas l\'interrogatoire.', lesson: 'st-reciprocite' },
+      { h: 'Ose un peu plus profond', p: 'Passe du « quoi » au « pourquoi ». Ces conversations sont bien plus agréables que ce qu\'on imagine.', lesson: 'st-profond' },
+      { h: 'Tu plais plus que tu ne crois', p: 'Après une rencontre, on sous-estime presque toujours combien l\'autre nous a apprécié. Ne rejoue pas le film en boucle.', lesson: 'as-likinggap' },
+    ],
+  },
+  {
+    id: 'soiree', icon: 'spark', t: 'Une soirée', sub: 'Inconnus, groupe, événement',
+    key: { label: 'Ta phrase d\'ouverture', ph: 'Ex. : Vous vous connaissez comment avec Julie ?' },
+    tips: [
+      { h: 'Pars de ce que vous partagez', p: 'Le lieu, l\'hôte, la musique, le buffet. « Vous connaissez Julie comment ? » marche presque partout.', lesson: 'st-fils' },
+      { h: 'Téléphone dans la poche', p: 'C\'est rassurant sur le moment, mais ça te rend moins accessible et entretient le trac.', lesson: 'as-securite' },
+      { h: 'Demande conseil', p: '« Tu me conseilles quoi au buffet ? » Une ouverture facile, qui met l\'autre en valeur.', lesson: 'as-conseil' },
+      { h: 'Sors en 3 temps', p: 'Signale, résume, ouvre : « Je vais saluer Léa. J\'ai adoré ton histoire de rando, envoie-moi le nom du sentier ! »', lesson: 'st-sortie' },
+    ],
+  },
+  {
+    id: 'appel', icon: 'phone', t: 'Un appel important', sub: 'Négociation, client, démarche',
+    key: { label: 'Ce que tu veux obtenir de cet appel', ph: 'Ex. : Un rendez-vous avant vendredi.' },
+    tips: [
+      { h: 'Écris tes 3 points', p: 'Avant d\'appeler, note les 3 choses à dire, dans l\'ordre. Commence par la plus importante.', lesson: 'cl-conclusion' },
+      { h: 'Reformule à la fin', p: '« Donc si je résume, on se voit jeudi et tu m\'envoies le devis ? » Personne ne raccroche avec un malentendu.', lesson: 'ec-reformuler' },
+      { h: 'Ralentis', p: 'Au téléphone, le stress accélère encore plus le débit. Des pauses courtes valent mieux que des « euh ».', lesson: 'cl-pause' },
+      { h: 'Demande, simplement', p: 'Formule ta demande clairement à la fin. Demander de l\'aide ou un avis fait paraître plus compétent, pas moins.', lesson: 'as-conseil' },
+    ],
+  },
+];
+
+// Messages des rappels quotidiens (notifications). Un par jour, en rotation.
+const REMINDERS = [
+  'Tes 9 minutes du jour t\'attendent.',
+  'On t\'apprécie plus que tu ne crois. Séance du jour ?',
+  'Une question de relance aujourd\'hui ? Commence par ta séance.',
+  'Ta série continue si tu t\'entraînes aujourd\'hui.',
+  'Moins de « euh », plus de pauses : 9 minutes pour s\'entraîner.',
+  'Petit rappel : la régularité compte plus que la durée.',
+  'Un nouveau défi t\'attend peut-être. Ouvre Talking.',
+];

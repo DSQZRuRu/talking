@@ -54,6 +54,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 html, body { margin: 0; background: var(--paper); color: var(--ink); }
 body { font: 400 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; min-height: 100vh; }
@@ -462,3 +463,33 @@ b, strong { font-weight: 600; }
 /* ---------- sensation d'app native ---------- */
 button, .row, .tile, .opt, .btn, #tabs { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 html { overscroll-behavior-y: none; }
+
+/* ---------- avant un événement ---------- */
+.prep-cta { display: flex; align-items: center; gap: 14px; width: 100%; margin-top: 12px; padding: 14px 16px; border: 0; border-radius: var(--in); background: var(--surface); color: var(--ink); text-align: left; transition: transform .12s var(--ease); }
+.prep-cta:active { transform: scale(.98); }
+.prep-cta > .i { width: 18px; height: 18px; color: var(--ink-3); }
+.breath { display: grid; justify-items: center; margin: 18px 0 0; }
+.breath-ball { width: 190px; height: 190px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, var(--accent-muted), var(--accent) 70%); transform: scale(.5); transition-property: transform; transition-timing-function: ease-in-out; }
+.breath-ball.in { transform: scale(.88); }
+.breath-ball.top { transform: scale(1); }
+.breath-ball.out { transform: scale(.5); }
+.breath-txt { font: 700 1.35rem/1.2 var(--disp); margin: 20px 0 0; min-height: 1.2em; text-align: center; }
+.bubble.big { font: 700 1.5rem/1.2 var(--disp); padding: 16px 22px; margin: 4px 0 18px auto; }
+.tips { display: grid; gap: 8px; }
+.tipcard { display: flex; gap: 12px; padding: 14px 16px; border-radius: var(--in); background: var(--surface); }
+.tipcard > span { flex: none; width: 28px; height: 28px; border-radius: 10px 10px 10px 3px; background: var(--accent-soft); color: var(--accent-ink); display: grid; place-items: center; font: 800 .85rem/1 var(--disp); }
+.tipcard b { display: block; font: 700 1rem/1.3 var(--disp); }
+.tipcard p { margin: 3px 0 6px; font-size: .92rem; color: var(--ink-2); }
+.tipcard small { display: flex; align-items: center; gap: 5px; font-size: .76rem; color: var(--ink-3); }
+.tipcard small .i { width: 13px; height: 13px; }
+.recap { list-style: none; padding: 14px 16px; margin: 16px 0 0; border-radius: var(--in); background: var(--surface); display: grid; gap: 9px; }
+.recap li { display: flex; gap: 9px; align-items: flex-start; font-size: .94rem; font-weight: 500; }
+.recap .i { width: 17px; height: 17px; color: var(--good); margin-top: 2px; stroke-width: 2.4; }
+
+/* ---------- rappel ---------- */
+.times { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+.times button { border: 0; padding: 10px 14px; border-radius: var(--out-sm); background: var(--paper); font: 700 .95rem/1 var(--disp); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.times button.on { background: var(--accent); color: var(--on-accent); }
+.time-other { display: inline-flex; align-items: center; gap: 8px; padding: 4px 6px 4px 12px; border-radius: var(--out-sm); background: var(--paper); font-size: .85rem; color: var(--ink-3); }
+.time-other input { border: 0; background: var(--surface); border-radius: 10px; padding: 6px 8px; font: 700 .9rem/1 var(--disp); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .breath-ball { transition-duration: .01ms !important; } }

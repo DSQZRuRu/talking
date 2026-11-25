@@ -48,6 +48,9 @@
     users: '<circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5c1-3.3 3.4-5 6.5-5s5.5 1.7 6.5 5"/><path d="M15.5 5.3a3.5 3.5 0 0 1 0 6.4M17.5 14.7c2 .6 3.3 2.2 4 4.8"/>',
     heart: '<path d="M12 20s-7.5-4.5-7.5-10A4.3 4.3 0 0 1 12 7.2 4.3 4.3 0 0 1 19.5 10c0 5.5-7.5 10-7.5 10z"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5s1.1-6.1 3.4-8.5z"/>',
+    phone: '<path d="M6.5 3.5h3l1.5 4-2 1.3a10.5 10.5 0 0 0 6.2 6.2l1.3-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/>',
+    wind: '<path d="M3.5 9h11a3 3 0 1 0-3-3M3.5 15h14a3 3 0 1 1-3 3M3.5 12h8"/>',
+    bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
     refresh: '<path d="M19.5 12a7.5 7.5 0 0 1-13.1 5M4.5 12a7.5 7.5 0 0 1 13.1-5"/><path d="M17.6 3.5V7h-3.5M6.4 20.5V17h3.5"/>',
   };
   const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n]}</svg>`;
@@ -287,6 +290,93 @@
     });
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && dialogOpen) dialogOpen(false); });
+
+  // Feuille avec un contenu libre (choix d'heure, etc.). Renvoie une fonction de fermeture.
+  function openSheet(html, mount) {
+    if (dialogOpen) dialogOpen(false);
+    const el = document.createElement('div');
+    el.className = 'sheet-wrap';
+    el.innerHTML = `<div class="sheet-bg"></div><div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('in'));
+    const close = () => {
+      if (dialogOpen !== close) return;
+      dialogOpen = null; el.classList.remove('in'); setTimeout(() => el.remove(), 220);
+    };
+    dialogOpen = close;
+    el.querySelector('.sheet-bg').onclick = close;
+    mount(el, close);
+    return close;
+  }
+
+  // ---------- rappel quotidien (notifications locales, app Android) ----------
+  const LN = isNative() && window.capacitorLocalNotifications && window.capacitorLocalNotifications.LocalNotifications;
+  const REM_IDS = [...Array(14)].map((_, k) => 1001 + k);
+  const hhmm = r => `${String(r.h).padStart(2, '0')}:${String(r.m).padStart(2, '0')}`;
+  // On programme les 14 prochains jours (messages variés) et on reprogramme à chaque ouverture
+  // et après chaque séance : le rappel du jour disparaît si la séance est déjà faite.
+  async function scheduleReminders() {
+    if (!LN) return;
+    try {
+      await LN.cancel({ notifications: REM_IDS.map(id => ({ id })) });
+      const r = state.reminder;
+      if (!r || !r.on) return;
+      const perm = await LN.checkPermissions();
+      if (perm.display !== 'granted') return;
+      const now = new Date(), doneToday = (state.progress.days[today()] || 0) > 0;
+      const start = Math.floor(now.getTime() / 864e5), pm = pendingMission();
+      const list = [];
+      for (let d = 0; d < 14; d++) {
+        const at = new Date(now); at.setDate(now.getDate() + d); at.setHours(r.h, r.m, 0, 0);
+        if (d === 0 && (doneToday || at <= now)) continue;
+        const body = pm && d <= 1 ? 'Et ton défi, ça a donné quoi ? Viens comparer avec ta prédiction.' : REMINDERS[(start + d) % REMINDERS.length];
+        list.push({ id: REM_IDS[d], title: state.profile && state.profile.name ? `${state.profile.name}, c'est l'heure` : 'Talking', body, schedule: { at, allowWhileIdle: true }, smallIcon: 'ic_stat_talking', iconColor: '#3346FF' });
+      }
+      if (list.length) await LN.schedule({ notifications: list });
+    } catch { /* notifications indisponibles : l'app fonctionne sans */ }
+  }
+  async function enableReminder(h, m) {
+    if (!LN) return false;
+    try {
+      let perm = await LN.checkPermissions();
+      if (perm.display !== 'granted') perm = await LN.requestPermissions();
+      if (perm.display !== 'granted') {
+        await dialog({ title: 'Notifications bloquées', body: 'Android n\'autorise pas Talking à t\'envoyer de notifications. Active-les dans Réglages, Applications, Talking, Notifications, puis réessaie.', confirm: 'Compris', icon: 'bell' });
+        return false;
+      }
+    } catch { return false; }
+    state.reminder = { on: true, h, m }; save();
+    await scheduleReminders();
+    return true;
+  }
+  function ReminderSheet(after) {
+    const cur = state.reminder && state.reminder.on ? state.reminder : null;
+    const presets = [[7, 30], [8, 30], [12, 30], [18, 30], [21, 0]];
+    let pickH = cur ? cur.h : 8, pickM = cur ? cur.m : 30;
+    openSheet(`
+      <span class="sheet-ic">${ic('bell')}</span>
+      <h2>Un rappel chaque jour</h2>
+      <p>Choisis un moment précis de ta journée, par exemple juste après ton café. Lier l'entraînement à un moment fixe aide beaucoup à tenir.</p>
+      <div class="times">${presets.map(([h, m]) => `<button data-h="${h}" data-m="${m}" class="${h === pickH && m === pickM ? 'on' : ''}">${hhmm({ h, m })}</button>`).join('')}
+        <label class="time-other">Autre<input type="time" id="rtime" value="${hhmm({ h: pickH, m: pickM })}"></label></div>
+      <div class="sheet-actions">
+        <button class="btn primary" id="ron">${cur ? 'Mettre à jour' : 'Activer le rappel'}</button>
+        <button class="btn secondary" id="roff">${cur ? 'Désactiver' : 'Plus tard'}</button>
+      </div>`, (el, close) => {
+      const sync = () => {
+        el.querySelectorAll('.times button').forEach(b => b.classList.toggle('on', +b.dataset.h === pickH && +b.dataset.m === pickM));
+        el.querySelector('#rtime').value = hhmm({ h: pickH, m: pickM });
+      };
+      el.querySelectorAll('.times button').forEach(b => b.onclick = () => { pickH = +b.dataset.h; pickM = +b.dataset.m; sync(); });
+      el.querySelector('#rtime').onchange = e => { const [h, m] = e.target.value.split(':').map(Number); if (!Number.isNaN(h)) { pickH = h; pickM = m || 0; sync(); } };
+      el.querySelector('#ron').onclick = async () => { close(); if (await enableReminder(pickH, pickM)) after && after(); };
+      el.querySelector('#roff').onclick = async () => {
+        close();
+        state.reminder = cur ? { ...cur, on: false } : { on: false, h: pickH, m: pickM, later: true }; save();
+        await scheduleReminders(); after && after();
+      };
+    });
+  }
 
   // Bouton retour d'Android (et du navigateur) : il revient en arrière dans l'app au lieu de la fermer.
   // Chaque écran secondaire déclare son « retour » ; on garde une entrée d'historique tant qu'il y en a un.
@@ -546,12 +636,14 @@
           <ul class="pills">${plan.map(([i, t]) => `<li>${ic(i)}${t}</li>`).join('')}</ul>
           <button class="btn ${doneToday ? 'secondary' : 'invert'}" id="go">${doneToday ? 'Refaire une séance' : 'C\'est parti'}${ic('right')}</button>
         </article>
+        <button class="prep-cta" id="prep"><span class="row-ic">${ic('wind')}</span><span class="row-txt"><b>Un moment important bientôt ?</b><small>Entretien, réunion, rendez-vous : prépare-toi en 3 minutes</small></span>${ic('chev')}</button>
         ${predictionCard()}
         <div class="stats">${stat(overall(), 'Score')}${stat(doneMissions().length, 'Défis réussis')}${stat(`${pr.lessonsDone.length}<small>/${LESSONS.length}</small>`, 'Leçons')}</div>
         <h3 class="section">Tes compétences</h3>
         ${skillRows(p.levels)}
       </section>`);
     on('#go', 'click', () => Session());
+    on('#prep', 'click', () => EventPrep());
     on('#mdone', 'click', () => MissionReport(pendingMission()));
     on('#mskip', 'click', () => MissionSkip(pendingMission()));
   }
@@ -1061,6 +1153,117 @@
       </section>`);
     on('#home', 'click', Home);
     setBack(Home);
+    scheduleReminders();
+    if (isNative() && LN && !state.reminder) setTimeout(() => ReminderSheet(), 700);
+  }
+
+  // ================= AVANT UN ÉVÉNEMENT =================
+  // Préparation express : respiration guidée, recadrage du trac, fiche de repères, prédiction.
+  let breathTimer = null;
+  function stopBreath() { clearTimeout(breathTimer); breathTimer = null; }
+  function prepFrame(step, inner) {
+    return `<section class="screen session">
+      <div class="sbar"><button class="icon-btn" id="pquit" aria-label="Fermer">${ic('x')}</button>
+        <div class="segs">${[0, 1, 2, 3, 4].map(k => `<i class="${k < step ? 'done' : k === step ? 'cur' : ''}"></i>`).join('')}</div>
+        <span class="clock">${step + 1}/5</span></div>
+      ${inner}</section>`;
+  }
+  function EventPrep(ev, step = 0) {
+    showTabs(null); stopBreath();
+    const go = k => EventPrep(ev, k);
+    const leave = () => { stopBreath(); Home(); };
+    if (step === 0) {
+      render(prepFrame(0, `
+        ${label('wind', 'Avant un moment important')}
+        <h2 class="title">Qu'est-ce qui t'attend&nbsp;?</h2>
+        <div class="group">${EVENTS.map(e => row(`data-ev="${e.id}"`, e.icon, e.t, e.sub)).join('')}</div>
+        <p class="note">Respiration, recadrage du trac et tes repères pour ce moment précis. Environ 3 minutes.</p>`));
+      on('[data-ev]', 'click', e => EventPrep(EVENTS.find(x => x.id === e.currentTarget.dataset.ev), 1));
+      on('#pquit', 'click', leave); setBack(leave);
+      return;
+    }
+    if (step === 1) {
+      // Soupir cyclique (Balban et al., 2023) : double inspiration par le nez, longue expiration.
+      const CYCLES = 4;
+      const PHASES = [['in', 'Inspire par le nez', 2200], ['top', 'Encore un peu', 1000], ['out', 'Expire lentement par la bouche', 5500]];
+      render(prepFrame(1, `
+        ${label('wind', `${ev.t} · Respire`)}
+        <h2 class="title">Quatre soupirs pour faire redescendre</h2>
+        <div class="breath"><div class="breath-ball" id="ball"></div><p class="breath-txt" id="btxt">Prêt·e&nbsp;?</p><p class="note center" id="bcount">${CYCLES} cycles, environ 35 secondes</p></div>
+        <div class="footer-cta"><button class="btn primary" id="bstart">Commencer</button><button class="btn ghost" id="bskip">Passer</button></div>`));
+      on('#pquit', 'click', leave); setBack(() => go(0));
+      let cycle = 0, phase = 0;
+      const $ball = $('#ball'), $txt = $('#btxt'), $cnt = $('#bcount');
+      const tick = () => {
+        if (!document.body.contains($ball)) { stopBreath(); return; }
+        if (cycle >= CYCLES) { $txt.textContent = 'C\'est bien.'; $ball.className = 'breath-ball'; $cnt.textContent = 'Ta respiration a ralenti.'; $('#bstart').hidden = false; $('#bstart').textContent = 'Continuer'; $('#bstart').onclick = () => go(2); $('#bskip').hidden = true; return; }
+        const [cls, txt, ms] = PHASES[phase];
+        $ball.className = `breath-ball ${cls}`; $ball.style.transitionDuration = `${ms}ms`;
+        $txt.textContent = txt; $cnt.textContent = `Cycle ${cycle + 1} sur ${CYCLES}`;
+        phase = (phase + 1) % PHASES.length; if (phase === 0) cycle++;
+        breathTimer = setTimeout(tick, ms);
+      };
+      on('#bstart', 'click', () => { $('#bstart').hidden = true; buzz(10); tick(); });
+      on('#bskip', 'click', () => go(2));
+      return;
+    }
+    if (step === 2) {
+      render(prepFrame(2, `
+        ${label('spark', `${ev.t} · Recadre`)}
+        <h2 class="title">Dis-le à voix haute&nbsp;:</h2>
+        <div class="bubble me big">Je suis excité·e.</div>
+        <p class="lead sm">Ton cœur qui bat vite, c'est la même activation que l'enthousiasme. Le nommer « excitation » plutôt que d'essayer de te calmer aide à te sentir plus prêt·e.</p>
+        <div class="callout"><b>Ça se voit moins que tu ne crois</b><p>Les autres perçoivent bien moins ta nervosité que toi. Tu la sens de l'intérieur, eux ne voient presque rien.</p></div>
+        <p class="note">Brooks, 2014 (effet confirmé sur le ressenti, pas sur la performance mesurée) ; Savitsky & Gilovich, 2003.</p>
+        <div class="footer-cta"><button class="btn primary" id="n">C'est dit${ic('right')}</button></div>`));
+      on('#pquit', 'click', leave); setBack(() => go(1));
+      on('#n', 'click', () => go(3));
+      return;
+    }
+    if (step === 3) {
+      const saved = (state.eventKeys || {})[ev.id] || '';
+      render(prepFrame(3, `
+        ${label(ev.icon, `${ev.t} · Tes repères`)}
+        <h2 class="title">Les 4 choses à garder en tête</h2>
+        <div class="tips">${ev.tips.map((t, k) => `<article class="tipcard"><span>${k + 1}</span><div><b>${esc(t.h)}</b><p>${esc(t.p)}</p><small>${ic('book')}${esc((lessonById(t.lesson) || {}).title || '')}</small></div></article>`).join('')}</div>
+        <p class="field-label">${esc(ev.key.label)}</p>
+        <textarea id="key" class="input" rows="2" placeholder="${esc(ev.key.ph)}">${esc(saved)}</textarea>
+        <div class="footer-cta"><button class="btn primary" id="n">Continuer${ic('right')}</button></div>`));
+      on('#pquit', 'click', leave); setBack(() => go(2));
+      on('#n', 'click', () => {
+        state.eventKeys = Object.assign(state.eventKeys || {}, { [ev.id]: $('#key').value.trim() }); save();
+        go(4);
+      });
+      return;
+    }
+    // step 4 : prêt + prédiction (devient un défi à faire le bilan ensuite)
+    const key = (state.eventKeys || {})[ev.id] || '';
+    const canPlan = !pendingMission();
+    let predAnx = null, predOk = null;
+    render(prepFrame(4, `
+      ${label('check', `${ev.t} · Prêt·e`)}
+      <h2 class="title">Tu es prêt·e.</h2>
+      ${key ? `<p class="field-label">Ta phrase</p><div class="bubble me">${esc(key)}</div>` : ''}
+      <ul class="recap">${ev.tips.map(t => `<li>${ic('check')}${esc(t.h)}</li>`).join('')}</ul>
+      ${canPlan ? `<p class="field-label">Ton stress prévu</p>${scale('pa', 'Aucun', 'Maximum')}
+        <p class="field-label">Comment tu penses que ça va se passer</p>${scale('po', 'Très mal', 'Très bien')}
+        <p class="note">Après, reviens dans l'app : tu compareras ta prédiction à ce qui s'est vraiment passé.</p>` : ''}
+      <div class="footer-cta"><button class="btn primary" id="go" ${canPlan ? 'disabled' : ''}>J'y vais${ic('right')}</button></div>`));
+    on('#pquit', 'click', leave); setBack(() => go(3));
+    const check = () => { $('#go').disabled = canPlan && (predAnx === null || predOk === null); };
+    if (canPlan) { wireScale('pa', v => { predAnx = v; check(); }); wireScale('po', v => { predOk = v; check(); }); }
+    on('#go', 'click', () => {
+      if (canPlan) {
+        state.missions.push({ id: Date.now(), lvl: state.missionLevel, t: ev.t.replace(/^Une /, 'Ta ').replace(/^Un /, 'Ton '), when: '', plan: key || ev.tips[0].h, predAnx, predOk, plannedOn: today(), status: 'planned', event: ev.id });
+        state.progress.xp += 15; save(); scheduleReminders();
+      }
+      buzz([10, 60, 10]);
+      render(`<section class="screen result"><span class="result-ic">${ic('spark')}</span><h2 class="title">Bonne chance.</h2>
+        <p class="lead">Tu n'as pas besoin d'être parfait·e, juste présent·e. Une question de relance, une pause, et ça roule.</p>
+        ${canPlan ? '<p class="note">Ton bilan t\'attendra sur l\'accueil.</p>' : ''}
+        <div class="footer-cta"><button class="btn primary" id="h">Fermer</button></div></section>`);
+      on('#h', 'click', Home); setBack(Home);
+    });
   }
 
   // ================= ENTRAÎNEMENT LIBRE =================
@@ -1076,6 +1279,7 @@
           ${row('data-a="rew"', 'pen', 'Reformulation', 'Transformer une réponse plate')}
           ${row('data-a="speak"', 'mic', 'Parle 60 secondes', 'Béquilles, débit, réécoute')}
           ${row('data-a="recall"', 'recall', 'Réviser', 'Questions sur les leçons déjà vues')}
+          ${row('data-a="prep"', 'wind', 'Avant un moment important', 'Préparation express en 3 minutes')}
           ${row('data-a="mission"', 'compass', 'Défi terrain', pendingMission() ? 'Un défi est en cours' : 'Choisir un défi réel')}
         </div>
         <h3 class="section">Bibliothèque</h3>
@@ -1093,6 +1297,7 @@
         if (!seen.length) { dialog({ title: 'Rien à réviser pour l\'instant', body: 'Les révisions portent sur les leçons que tu as déjà vues. Fais d\'abord ta séance du jour.', confirm: 'Compris', icon: 'recall' }); return; }
         solo(shuffle(seen).slice(0, 5).map(l => ({ type: 'recall', lesson: l })));
       }
+      if (a === 'prep') { EventPrep(); return; }
       if (a === 'mission') { if (pendingMission()) Home(); else MissionPlan(null, Home); }
     });
     on('[data-l]', 'click', e => solo([{ type: 'lesson', lesson: lessonById(e.currentTarget.dataset.l) }]));
@@ -1118,6 +1323,7 @@
           ${isNative()
             ? `<button class="row" id="apk"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>${latestRelease && newer(latestRelease.version, BUILD.version) ? `Mettre à jour vers la ${esc(latestRelease.version)}` : 'Réinstaller la dernière version'}</b><small id="apkst">Installée : ${esc(BUILD.version)}${latestRelease ? ` · dernière : ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</button>`
             : `<a class="row" id="apk" href="${esc(latestRelease ? latestRelease.url : APK_URL)}"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>Télécharger l'app Android</b><small>Fichier APK${latestRelease ? ` · version ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</a>`}
+          ${row('id="remind"', 'bell', 'Rappel quotidien', !isNative() ? 'Disponible dans l\'app Android' : state.reminder && state.reminder.on ? `Tous les jours à ${hhmm(state.reminder)}` : 'Désactivé')}
           ${row('id="plan"', 'map', 'Mon plan', 'Profil de départ et 4 semaines')}
           ${row('id="src"', 'library', 'Sources et méthode', 'Toutes les études citées')}
           ${row('id="retake"', 'refresh', 'Refaire le test', 'Recalcule ton profil, efface la progression')}
@@ -1127,6 +1333,10 @@
         <p class="note center version">Talking ${esc(BUILD.version)}</p>
       </section>`);
     if (isNative()) on('#apk', 'click', () => runUpdate(msg => { const st = $('#apkst'); if (st) st.textContent = msg; }));
+    on('#remind', 'click', () => {
+      if (!isNative()) { dialog({ title: 'Rappels dans l\'app Android', body: 'Les notifications quotidiennes fonctionnent dans l\'app installée sur ton téléphone. Télécharge-la depuis cette page.', confirm: 'Compris', icon: 'bell' }); return; }
+      ReminderSheet(Profile);
+    });
     on('#plan', 'click', () => Plan(false));
     on('#src', 'click', Sources);
     on('#retake', 'click', async () => {
@@ -1175,5 +1385,6 @@
   if (!isNative() && 'serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
   showBanner();
   checkUpdate();
+  scheduleReminders();
   state.profile ? Home() : Welcome();
 })();

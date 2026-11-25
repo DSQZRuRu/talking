@@ -6,5 +6,11 @@
   "android": {
     "allowMixedContent": false,
     "adjustMarginsForEdgeToEdge": "auto"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_talking",
+      "iconColor": "#3346FF"
+    }
   }
 }
