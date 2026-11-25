@@ -13,10 +13,17 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Barres système aux couleurs du papier de l'app (claires le jour, sombres la nuit). -->
+        <item name="android:statusBarColor">@color/talking_paper</item>
+        <item name="android:navigationBarColor">@color/talking_paper</item>
+        <item name="android:windowLightStatusBar">@bool/talking_light_bars</item>
+        <item name="android:windowBackground">@color/talking_paper</item>
     </style>
 
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <item name="windowSplashScreenBackground">@color/talking_paper</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>
