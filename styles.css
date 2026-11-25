@@ -528,3 +528,7 @@ html { overscroll-behavior-y: none; }
 .wk-grid span { display: block; margin-top: 4px; font-size: .78rem; line-height: 1.35; color: var(--ink-3); }
 .review .bubble.them { font-style: normal; }
 .week .future { opacity: .45; }
+
+/* ---------- compte ---------- */
+.form-err { margin: 10px 2px 0; font-size: .88rem; font-weight: 500; color: var(--bad); }
+.input.code { font: 800 1.6rem/1 var(--disp); letter-spacing: .3em; text-align: center; font-variant-numeric: tabular-nums; }

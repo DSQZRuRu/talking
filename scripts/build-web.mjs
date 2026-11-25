@@ -6,7 +6,7 @@ const version = process.env.APP_VERSION || '0.0.0-dev';
 const repo = process.env.APP_REPO || 'DSQZRuRu/talking';
 rmSync('www', { recursive: true, force: true });
 mkdirSync('www');
-for (const f of ['index.html', 'styles.css', 'app.js', 'data.js', 'manifest.json', 'sw.js', 'assets', 'vendor', 'fonts']) {
+for (const f of ['index.html', 'config.js', 'styles.css', 'app.js', 'data.js', 'manifest.json', 'sw.js', 'assets', 'vendor', 'fonts']) {
   cpSync(f, `www/${f}`, { recursive: true });
 }
 const info = `window.TALKING_BUILD = ${JSON.stringify({ version, repo })};\n`;

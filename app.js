@@ -74,7 +74,11 @@
       return Object.assign(f, s, { progress: Object.assign(f.progress, s.progress || {}) });
     } catch { return fresh(); }
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* stockage indisponible */ } }
+  function save(opts = {}) {
+    if (!opts.keepStamp) state.updatedAt = Date.now();
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* stockage indisponible */ }
+    if (!opts.local) queueCloudPush();
+  }
 
   // ---------- utilitaires ----------
   const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -255,6 +259,156 @@
     const last = addDays(weekOf(today()), -7);
     if (state.reviewSeen === last) return null;
     return weekStats(last).active.length ? last : null;
+  }
+
+  // ---------- compte et sauvegarde en ligne (Supabase) ----------
+  // Toute la progression est un seul document JSON par utilisateur (table user_state).
+  // Règle de synchronisation : la version la plus récente gagne ; à la première connexion
+  // d'un téléphone qui a déjà une progression, on demande laquelle garder.
+  const CFG = window.TALKING_CONFIG || {};
+  const sb = CFG.supabaseUrl && CFG.supabaseKey && window.supabase && window.supabase.createClient
+    ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'talking.auth' } })
+    : null;
+  let cloudUser = null, pushTimer = null;
+  const cloud = { lastSync: null, error: null };
+  function queueCloudPush() {
+    if (!sb || !cloudUser || !state.profile) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(cloudPush, 1500);
+  }
+  async function cloudPush() {
+    if (!sb || !cloudUser || !state.profile) return false;
+    const { error } = await sb.from('user_state').upsert({ user_id: cloudUser.id, state, app_version: BUILD.version, updated_at: new Date(state.updatedAt || Date.now()).toISOString() });
+    cloud.error = error ? error.message : null;
+    if (!error) cloud.lastSync = Date.now();
+    return !error;
+  }
+  async function cloudFetch() {
+    const { data, error } = await sb.from('user_state').select('state, updated_at').eq('user_id', cloudUser.id).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  function adopt(remoteState) {
+    const f = fresh();
+    state = Object.assign(f, remoteState, { progress: Object.assign(f.progress, remoteState.progress || {}) });
+    save({ keepStamp: true, local: true });
+    scheduleReminders();
+  }
+  // Au démarrage : on récupère la session et, si le compte a une version plus récente, on la prend.
+  async function cloudInit() {
+    if (!sb) return;
+    try {
+      const { data } = await sb.auth.getSession();
+      cloudUser = data && data.session ? data.session.user : null;
+      sb.auth.onAuthStateChange((_e, session) => { cloudUser = session ? session.user : null; });
+      if (!cloudUser) return;
+      const row = await cloudFetch();
+      if (row && row.state && row.state.profile && (row.state.updatedAt || 0) > (state.updatedAt || 0)) {
+        adopt(row.state);
+        if (document.querySelector('.home, .welcome')) state.profile ? Home() : Welcome();
+      } else if (state.profile && (!row || (state.updatedAt || 0) > (row.state && row.state.updatedAt || 0))) {
+        await cloudPush();
+      } else cloud.lastSync = Date.now();
+    } catch (e) { cloud.error = e.message || String(e); }
+  }
+  // Après connexion : décider quelle progression garder.
+  async function afterLogin() {
+    const row = await cloudFetch();
+    const remote = row && row.state && row.state.profile ? row.state : null;
+    if (!remote) { if (state.profile) await cloudPush(); return 'pushed'; }
+    if (!state.profile) { adopt(remote); cloud.lastSync = Date.now(); return 'pulled'; }
+    const useRemote = await dialog({
+      title: 'Ce compte a déjà une progression',
+      body: `Sur le compte : ${plural((remote.progress.lessonsDone || []).length, 'leçon')}, ${plural(remote.progress.sessions || 0, 'séance')}. Sur ce téléphone : ${plural(state.progress.lessonsDone.length, 'leçon')}, ${plural(state.progress.sessions, 'séance')}. Laquelle veux-tu garder ? L'autre sera remplacée.`,
+      confirm: 'Garder celle du compte', cancel: 'Garder celle de ce téléphone', icon: 'refresh',
+    });
+    if (useRemote) { adopt(remote); cloud.lastSync = Date.now(); return 'pulled'; }
+    save(); await cloudPush(); return 'pushed';
+  }
+  const ago = t => { if (!t) return 'jamais'; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'à l\'instant' : m < 60 ? `il y a ${m} min` : m < 1440 ? `il y a ${Math.round(m / 60)} h` : `il y a ${Math.round(m / 1440)} j`; };
+
+  function Account(from = 'profile') {
+    showTabs(null);
+    const back = from === 'welcome' ? Welcome : Profile;
+    if (cloudUser) {
+      render(`
+        <section class="screen">
+          <button class="link-back" id="back">${ic('left')}${from === 'welcome' ? 'Retour' : 'Profil'}</button>
+          ${label('user', 'Ton compte')}
+          <h2 class="title">${esc(cloudUser.email || 'Connecté')}</h2>
+          <div class="callout"><b>${cloud.error ? 'Dernière sauvegarde en échec' : 'Progression sauvegardée'}</b>
+            <p>${cloud.error ? `Erreur : ${esc(cloud.error)}. Vérifie ta connexion et réessaie.` : `Dernière sauvegarde : ${ago(cloud.lastSync)}. Elle se fait automatiquement à chaque séance.`}</p></div>
+          <p class="note">Sur un autre téléphone, installe Talking, choisis « J'ai déjà un compte » et connecte-toi avec cette adresse : tu retrouveras tout.</p>
+          <div class="footer-cta"><button class="btn primary" id="sync">Sauvegarder maintenant</button><button class="btn ghost" id="out">Se déconnecter</button></div>
+        </section>`);
+      on('#back', 'click', back); setBack(back);
+      on('#sync', 'click', async () => { $('#sync').disabled = true; $('#sync').textContent = 'Sauvegarde…'; await cloudPush(); Account(from); });
+      on('#out', 'click', async () => {
+        if (!(await dialog({ title: 'Se déconnecter ?', body: 'Ta progression reste sur ce téléphone, mais elle ne sera plus sauvegardée en ligne.', confirm: 'Se déconnecter', cancel: 'Annuler', icon: 'user' }))) return;
+        await sb.auth.signOut(); cloudUser = null; back();
+      });
+      return;
+    }
+    let email = '';
+    const stepEmail = (err = '') => {
+      render(`
+        <section class="screen">
+          <button class="link-back" id="back">${ic('left')}${from === 'welcome' ? 'Retour' : 'Profil'}</button>
+          ${label('user', from === 'welcome' ? 'J\'ai déjà un compte' : 'Créer un compte')}
+          <h2 class="title">${from === 'welcome' ? 'Retrouve ta progression' : 'Sauvegarde ta progression'}</h2>
+          <p class="lead sm">${from === 'welcome' ? 'Connecte-toi avec l\'adresse e-mail de ton compte.' : 'Avec un compte, ta progression est sauvegardée en ligne et tu la retrouves sur un autre téléphone. Pas de mot de passe : on t\'envoie un code par e-mail.'}</p>
+          <input id="email" class="input" type="email" inputmode="email" autocomplete="email" placeholder="ton@email.fr" value="${esc(email)}">
+          ${err ? `<p class="form-err">${esc(err)}</p>` : ''}
+          <div class="footer-cta"><button class="btn primary" id="send">Recevoir un code</button></div>
+        </section>`);
+      on('#back', 'click', back); setBack(back);
+      const send = async () => {
+        email = $('#email').value.trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { stepEmail('Cette adresse e-mail ne semble pas valide.'); return; }
+        $('#send').disabled = true; $('#send').textContent = 'Envoi…';
+        const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+        if (error) { stepEmail(/rate|limit|seconds/i.test(error.message) ? 'Trop de demandes d\'affilée. Attends une minute puis réessaie.' : `Envoi impossible : ${error.message}`); return; }
+        stepCode();
+      };
+      on('#send', 'click', send);
+      on('#email', 'keydown', e => { if (e.key === 'Enter') send(); });
+    };
+    const stepCode = (err = '') => {
+      render(`
+        <section class="screen">
+          <button class="link-back" id="back">${ic('left')}Changer d'adresse</button>
+          ${label('user', 'Vérification')}
+          <h2 class="title">Entre le code reçu</h2>
+          <p class="lead sm">On vient de l'envoyer à <b>${esc(email)}</b>. Regarde aussi dans les spams.</p>
+          <input id="code" class="input code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456">
+          ${err ? `<p class="form-err">${esc(err)}</p>` : ''}
+          <div class="footer-cta"><button class="btn primary" id="verify">Valider</button><button class="btn ghost" id="resend">Renvoyer un code</button></div>
+        </section>`);
+      on('#back', 'click', () => stepEmail()); setBack(() => stepEmail());
+      $('#code').focus();
+      const verify = async () => {
+        const token = $('#code').value.replace(/\D/g, '');
+        if (token.length < 6) { stepCode('Le code fait au moins 6 chiffres.'); return; }
+        $('#verify').disabled = true; $('#verify').textContent = 'Vérification…';
+        const { data, error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+        if (error || !data.session) { stepCode('Code incorrect ou expiré. Vérifie-le ou demande-en un nouveau.'); return; }
+        cloudUser = data.session.user;
+        try {
+          const r = await afterLogin();
+          await dialog({ title: r === 'pulled' ? 'Progression récupérée' : 'Compte prêt', body: r === 'pulled' ? 'Tu retrouves toute ta progression.' : 'Ta progression est maintenant sauvegardée en ligne, automatiquement.', confirm: 'Continuer', icon: 'check' });
+        } catch (e) {
+          await dialog({ title: 'Connecté, mais la synchronisation a échoué', body: `Erreur : ${e.message || e}. Elle sera réessayée automatiquement.`, confirm: 'Compris', icon: 'user' });
+        }
+        state.profile ? Home() : Welcome();
+      };
+      on('#verify', 'click', verify);
+      on('#code', 'keydown', e => { if (e.key === 'Enter') verify(); });
+      on('#resend', 'click', async () => {
+        const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+        stepCode(error ? 'Trop de demandes d\'affilée. Attends une minute puis réessaie.' : 'Nouveau code envoyé.');
+      });
+    };
+    stepEmail();
   }
 
   // ---------- répétition espacée ----------
@@ -508,10 +662,12 @@
         </figure>
         <div class="footer-cta">
           <button class="btn primary" id="go">Commencer le test<span class="sub">2 min</span></button>
-          <p class="fine">Gratuit, sans compte. Tes données restent sur ton appareil.</p>
+          ${sb ? '<button class="btn ghost" id="login">J\'ai déjà un compte</button>' : ''}
+          <p class="fine">Gratuit. Le compte est facultatif.</p>
         </div>
       </section>`);
     on('#go', 'click', () => Quiz(0, { __hist: [] }));
+    on('#login', 'click', () => Account('welcome'));
   }
 
   const TOTAL_STEPS = QUIZ.length + 3;
@@ -1461,6 +1617,7 @@
           ${isNative()
             ? `<button class="row" id="apk"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>${latestRelease && newer(latestRelease.version, BUILD.version) ? `Mettre à jour vers la ${esc(latestRelease.version)}` : 'Réinstaller la dernière version'}</b><small id="apkst">Installée : ${esc(BUILD.version)}${latestRelease ? ` · dernière : ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</button>`
             : `<a class="row" id="apk" href="${esc(latestRelease ? latestRelease.url : APK_URL)}"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>Télécharger l'app Android</b><small>Fichier APK${latestRelease ? ` · version ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</a>`}
+          ${sb ? row('id="account"', 'user', cloudUser ? 'Compte et sauvegarde' : 'Créer un compte', cloudUser ? `${esc(cloudUser.email || '')} · sauvegardé ${ago(cloud.lastSync)}` : 'Sauvegarde ta progression en ligne') : ''}
           ${row('id="weeks"', 'spark', 'Bilans de la semaine', 'Ta semaine en cours et les précédentes')}
           ${row('id="remind"', 'bell', 'Rappel quotidien', !isNative() ? 'Disponible dans l\'app Android' : state.reminder && state.reminder.on ? `Tous les jours à ${hhmm(state.reminder)}` : 'Désactivé')}
           ${row('id="plan"', 'map', 'Mon plan', 'Profil de départ et 4 semaines')}
@@ -1484,6 +1641,7 @@
       if (!isNative()) { dialog({ title: 'Rappels dans l\'app Android', body: 'Les notifications quotidiennes fonctionnent dans l\'app installée sur ton téléphone. Télécharge-la depuis cette page.', confirm: 'Compris', icon: 'bell' }); return; }
       ReminderSheet(Profile);
     });
+    on('#account', 'click', () => Account('profile'));
     on('#weeks', 'click', () => WeekReview(weekOf(today()), 'profile'));
     on('#plan', 'click', () => Plan(false));
     on('#src', 'click', Sources);
@@ -1491,7 +1649,13 @@
       if (await dialog({ title: 'Refaire le test ?', body: 'Ton profil sera recalculé et ta progression remise à zéro : série, leçons, défis et mesures.', confirm: 'Refaire le test', cancel: 'Annuler', danger: true, icon: 'refresh' })) Quiz(0, { __hist: [] });
     });
     on('#reset', 'click', async () => {
-      if (await dialog({ title: 'Tout effacer ?', body: 'Toutes tes données seront supprimées de ce téléphone. Impossible de revenir en arrière.', confirm: 'Tout effacer', cancel: 'Annuler', danger: true, icon: 'trash' })) { state = fresh(); save(); Welcome(); }
+      const body = cloudUser
+        ? 'Tes données seront supprimées de ce téléphone et tu seras déconnecté. Ta sauvegarde en ligne est conservée : tu pourras la récupérer en te reconnectant.'
+        : 'Toutes tes données seront supprimées de ce téléphone. Impossible de revenir en arrière.';
+      if (await dialog({ title: 'Tout effacer ?', body, confirm: 'Tout effacer', cancel: 'Annuler', danger: true, icon: 'trash' })) {
+        if (sb && cloudUser) { clearTimeout(pushTimer); try { await sb.auth.signOut(); } catch { } cloudUser = null; }
+        state = fresh(); save(); Welcome();
+      }
     });
   }
   function sparkline(vals) {
@@ -1535,4 +1699,5 @@
   checkUpdate();
   scheduleReminders();
   state.profile ? Home() : Welcome();
+  cloudInit();
 })();

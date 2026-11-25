@@ -44,3 +44,11 @@ Aucune dépendance. Déployable tel quel sur GitHub Pages, Netlify, Vercel… La
 - ⚠️ Si le dépôt est privé, le lien de téléchargement ne marche que pour un compte GitHub connecté qui a accès au dépôt, et l'app ne peut pas détecter les nouvelles versions.
 
 Compiler en local : `npm install && npm run android`, puis `cd android && ./gradlew assembleRelease` (nécessite le SDK Android).
+
+## Compte et sauvegarde en ligne (Supabase)
+1. Dans le projet Supabase (`vvzykxqlptveqbynaodd`) : **SQL Editor → New query**, colle `supabase/migrations/001_comptes_et_sauvegarde.sql`, **Run**.
+2. **Authentication → Emails → Templates** : dans « Magic Link » et « Confirm signup », ajoute le code `{{ .Token }}` au message (l'app se connecte avec ce code à 6 chiffres, pas avec le lien).
+3. Mets la clé publique (publishable/anon, **jamais** service_role) dans `config.js`.
+
+Tant que la clé est vide, l'app fonctionne normalement sans compte (les écrans de compte sont masqués).
+La progression est un document JSON par utilisateur (`user_state`, protégé par RLS) ; `entitlements` est prête pour les abonnements (écriture réservée au serveur).
