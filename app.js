@@ -333,21 +333,47 @@
         list.push({ id: REM_IDS[d], title: state.profile && state.profile.name ? `${state.profile.name}, c'est l'heure` : 'Talking', body, schedule: { at, allowWhileIdle: true }, smallIcon: 'ic_stat_talking', iconColor: '#3346FF' });
       }
       if (list.length) await LN.schedule({ notifications: list });
-    } catch { /* notifications indisponibles : l'app fonctionne sans */ }
+      const pending = await LN.getPending();
+      return ((pending && pending.notifications) || []).filter(n => REM_IDS.includes(+n.id)).length;
+    } catch { return 0; /* notifications indisponibles : l'app fonctionne sans */ }
   }
-  async function enableReminder(h, m) {
-    if (!LN) return false;
+  // Vérifie (et demande si besoin) l'autorisation d'afficher des notifications. Jamais d'échec silencieux.
+  async function ensureNotifPermission() {
+    if (!LN) {
+      await dialog({ title: 'Rappels indisponibles', body: 'Le module de notifications n\'a pas pu démarrer sur ce téléphone. Mets l\'app à jour vers la dernière version, puis réessaie.', confirm: 'Compris', icon: 'bell' });
+      return false;
+    }
     try {
       let perm = await LN.checkPermissions();
       if (perm.display !== 'granted') perm = await LN.requestPermissions();
-      if (perm.display !== 'granted') {
-        await dialog({ title: 'Notifications bloquées', body: 'Android n\'autorise pas Talking à t\'envoyer de notifications. Active-les dans Réglages, Applications, Talking, Notifications, puis réessaie.', confirm: 'Compris', icon: 'bell' });
-        return false;
-      }
-    } catch { return false; }
+      if (perm.display === 'granted') return true;
+      await dialog({ title: 'Notifications bloquées', body: 'Android n\'autorise pas Talking à t\'envoyer de notifications. Active-les dans Réglages, Applications, Talking, Notifications, puis réessaie.', confirm: 'Compris', icon: 'bell' });
+    } catch (e) {
+      await dialog({ title: 'Impossible d\'activer les rappels', body: `Android a renvoyé une erreur : ${(e && e.message) || e}. Réessaie, et dis-le-moi si ça continue.`, confirm: 'Compris', icon: 'bell' });
+    }
+    return false;
+  }
+  async function enableReminder(h, m) {
+    if (!(await ensureNotifPermission())) return false;
     state.reminder = { on: true, h, m }; save();
-    await scheduleReminders();
+    const n = await scheduleReminders();
+    if (!n) {
+      await dialog({ title: 'Rappel enregistré, mais non programmé', body: 'Android a refusé de programmer les notifications. Réessaie dans un instant, et dis-le-moi si ça continue.', confirm: 'Compris', icon: 'bell' });
+      return true;
+    }
+    const test = await dialog({ title: `Rappel activé à ${hhmm({ h, m })}`, body: 'Tu le recevras chaque jour à cette heure, à quelques minutes près (Android regroupe les alarmes pour économiser la batterie). Tu veux vérifier tout de suite ?', confirm: 'Envoyer une notification de test', cancel: 'Pas besoin', icon: 'bell' });
+    if (test) await sendTestNotification();
     return true;
+  }
+  async function sendTestNotification() {
+    if (!(await ensureNotifPermission())) return;
+    try {
+      // Sans « schedule », la notification s'affiche immédiatement.
+      await LN.schedule({ notifications: [{ id: 999, title: 'Talking', body: 'Les rappels fonctionnent. À demain pour ta séance !', smallIcon: 'ic_stat_talking', iconColor: '#3346FF' }] });
+      await dialog({ title: 'Notification envoyée', body: 'Elle devrait apparaître en haut de ton écran. Si rien ne s\'affiche, vérifie que les notifications de Talking sont activées dans les réglages d\'Android.', confirm: 'OK', icon: 'check' });
+    } catch (e) {
+      await dialog({ title: 'Échec de la notification de test', body: `Android a renvoyé : ${(e && e.message) || e}.`, confirm: 'Compris', icon: 'bell' });
+    }
   }
   function ReminderSheet(after) {
     const cur = state.reminder && state.reminder.on ? state.reminder : null;
@@ -362,6 +388,7 @@
       <div class="sheet-actions">
         <button class="btn primary" id="ron">${cur ? 'Mettre à jour' : 'Activer le rappel'}</button>
         <button class="btn secondary" id="roff">${cur ? 'Désactiver' : 'Plus tard'}</button>
+        ${cur ? '<button class="btn ghost" id="rtest">Envoyer une notification de test</button>' : ''}
       </div>`, (el, close) => {
       const sync = () => {
         el.querySelectorAll('.times button').forEach(b => b.classList.toggle('on', +b.dataset.h === pickH && +b.dataset.m === pickM));
@@ -370,6 +397,8 @@
       el.querySelectorAll('.times button').forEach(b => b.onclick = () => { pickH = +b.dataset.h; pickM = +b.dataset.m; sync(); });
       el.querySelector('#rtime').onchange = e => { const [h, m] = e.target.value.split(':').map(Number); if (!Number.isNaN(h)) { pickH = h; pickM = m || 0; sync(); } };
       el.querySelector('#ron').onclick = async () => { close(); if (await enableReminder(pickH, pickM)) after && after(); };
+      const t = el.querySelector('#rtest');
+      if (t) t.onclick = async () => { close(); await sendTestNotification(); };
       el.querySelector('#roff').onclick = async () => {
         close();
         state.reminder = cur ? { ...cur, on: false } : { on: false, h: pickH, m: pickM, later: true }; save();
@@ -1333,6 +1362,14 @@
         <p class="note center version">Talking ${esc(BUILD.version)}</p>
       </section>`);
     if (isNative()) on('#apk', 'click', () => runUpdate(msg => { const st = $('#apkst'); if (st) st.textContent = msg; }));
+    // État réel côté Android : nombre de rappels en attente.
+    if (LN && state.reminder && state.reminder.on) {
+      LN.getPending().then(res => {
+        const n = ((res && res.notifications) || []).filter(x => REM_IDS.includes(+x.id)).length;
+        const el = $('#remind small');
+        if (el) el.textContent = n ? `Tous les jours à ${hhmm(state.reminder)} · ${n} rappels programmés` : `Tous les jours à ${hhmm(state.reminder)} · aucun rappel programmé, touche pour réactiver`;
+      }).catch(() => { });
+    }
     on('#remind', 'click', () => {
       if (!isNative()) { dialog({ title: 'Rappels dans l\'app Android', body: 'Les notifications quotidiennes fonctionnent dans l\'app installée sur ton téléphone. Télécharge-la depuis cette page.', confirm: 'Compris', icon: 'bell' }); return; }
       ReminderSheet(Profile);
