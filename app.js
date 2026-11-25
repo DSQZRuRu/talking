@@ -125,18 +125,48 @@
       showBanner();
     } catch { /* hors ligne : on garde le lien direct */ }
   }
+  // Module natif de mise à jour (Android) : télécharge l'APK puis ouvre l'installeur système.
+  const Updater = isNative() && window.capacitorExports && window.capacitorExports.registerPlugin ? window.capacitorExports.registerPlugin('AppUpdater') : null;
+  let updating = false;
+  async function runUpdate(onStatus) {
+    const url = latestRelease ? latestRelease.url : APK_URL;
+    if (!Updater) { location.href = url; return; }
+    if (updating) return;
+    updating = true;
+    let sub;
+    try {
+      onStatus('Téléchargement…');
+      sub = await Updater.addListener('progress', e => {
+        if (e && e.step === 'permission') onStatus('Autorise Talking à installer ses mises à jour, puis reviens');
+        else if (e && typeof e.percent === 'number') onStatus(`Téléchargement… ${e.percent} %`);
+      });
+      await Updater.downloadAndInstall({ url });
+      onStatus('Confirme l\'installation');
+    } catch (err) {
+      onStatus(`${(err && err.message) || 'La mise à jour a échoué'}. Réessaie.`, true);
+    } finally {
+      updating = false;
+      try { sub && sub.remove(); } catch { }
+    }
+  }
+
   function showBanner() {
     const $b = document.getElementById('banner');
     let html = '';
     if (isNative()) {
       if (latestRelease && newer(latestRelease.version, BUILD.version)) {
-        html = `${ic('download')}<span><b>Version ${esc(latestRelease.version)} disponible</b><small>Tu as la ${esc(BUILD.version)}</small></span><a class="bbtn" href="${esc(latestRelease.url)}">Mettre à jour</a>`;
+        html = `${ic('download')}<span><b>Version ${esc(latestRelease.version)} disponible</b><small id="bstatus">Tu as la ${esc(BUILD.version)}</small></span><button class="bbtn" id="bupdate">Mettre à jour</button>`;
       }
     } else {
       let hidden = false; try { hidden = localStorage.getItem('talking.banner.hidden') === '1'; } catch { }
       if (!hidden) html = `${ic('download')}<span><b>Talking pour Android</b><small>${latestRelease ? `Version ${esc(latestRelease.version)}` : 'Fichier APK'}</small></span><a class="bbtn" href="${esc(latestRelease ? latestRelease.url : APK_URL)}">Télécharger</a><button class="bx" aria-label="Masquer">${ic('x')}</button>`;
     }
     $b.innerHTML = html; $b.hidden = !html;
+    const u = $b.querySelector('#bupdate');
+    if (u) u.onclick = () => runUpdate((msg, failed) => {
+      const st = $b.querySelector('#bstatus'); if (st) st.textContent = msg;
+      u.disabled = updating; u.textContent = failed ? 'Réessayer' : updating ? '…' : 'Mettre à jour';
+    });
     const x = $b.querySelector('.bx');
     if (x) x.onclick = () => { try { localStorage.setItem('talking.banner.hidden', '1'); } catch { } showBanner(); };
   }
@@ -1011,7 +1041,9 @@
         ${journal.length ? `<h3 class="section">Journal des défis</h3><ul class="journal">${journal.map(m => `<li class="${m.status}"><span class="jdot">${ic(m.status === 'done' ? 'check' : 'x')}</span><div><p>${esc(m.t)}</p>${m.status === 'done' ? `<small>Prévu ${m.predOk}/10, réel ${m.ok}/10 · stress ${m.predAnx} → ${m.anx}</small>` : '<small>Non réalisé</small>'}${m.note ? `<small class="jnote">« ${esc(m.note)} »</small>` : ''}</div></li>`).join('')}</ul>` : ''}
         <h3 class="section">Réglages</h3>
         <div class="group">
-          <a class="row" id="apk" href="${esc(latestRelease ? latestRelease.url : APK_URL)}"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>${isNative() ? 'Télécharger la dernière version' : 'Télécharger l\'app Android'}</b><small>${isNative() ? `Installée : ${esc(BUILD.version)}` : 'Fichier APK'}${latestRelease ? ` · dernière : ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</a>
+          ${isNative()
+            ? `<button class="row" id="apk"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>${latestRelease && newer(latestRelease.version, BUILD.version) ? `Mettre à jour vers la ${esc(latestRelease.version)}` : 'Réinstaller la dernière version'}</b><small id="apkst">Installée : ${esc(BUILD.version)}${latestRelease ? ` · dernière : ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</button>`
+            : `<a class="row" id="apk" href="${esc(latestRelease ? latestRelease.url : APK_URL)}"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>Télécharger l'app Android</b><small>Fichier APK${latestRelease ? ` · version ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</a>`}
           ${row('id="plan"', 'map', 'Mon plan', 'Profil de départ et 4 semaines')}
           ${row('id="src"', 'library', 'Sources et méthode', 'Toutes les études citées')}
           ${row('id="retake"', 'refresh', 'Refaire le test', 'Recalcule ton profil, efface la progression')}
@@ -1020,6 +1052,7 @@
         <p class="note disclaimer">${esc(DISCLAIMER)}</p>
         <p class="note center version">Talking ${esc(BUILD.version)}</p>
       </section>`);
+    if (isNative()) on('#apk', 'click', () => runUpdate(msg => { const st = $('#apkst'); if (st) st.textContent = msg; }));
     on('#plan', 'click', () => Plan(false));
     on('#src', 'click', Sources);
     on('#retake', 'click', () => { if (confirm('Refaire le test ? Ta progression sera réinitialisée.')) Quiz(0, { __hist: [] }); });
