@@ -257,8 +257,56 @@
   }
   const stat = (v, l) => `<div><b>${v}</b><span>${l}</span></div>`;
 
+  // ---------- fenêtres de dialogue de l'app (à la place de confirm/alert du système) ----------
+  let dialogOpen = null;
+  function dialog({ title, body = '', confirm = 'OK', cancel = null, danger = false, icon = 'chat' }) {
+    return new Promise(resolve => {
+      if (dialogOpen) dialogOpen(false);
+      const el = document.createElement('div');
+      el.className = 'sheet-wrap';
+      el.innerHTML = `<div class="sheet-bg"></div>
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-t">
+          <span class="sheet-ic ${danger ? 'danger' : ''}">${ic(icon)}</span>
+          <h2 id="sheet-t">${esc(title)}</h2>${body ? `<p>${esc(body)}</p>` : ''}
+          <div class="sheet-actions">
+            <button class="btn ${danger ? 'danger' : 'primary'}" data-r="1">${esc(confirm)}</button>
+            ${cancel ? `<button class="btn secondary" data-r="0">${esc(cancel)}</button>` : ''}
+          </div></div>`;
+      document.body.appendChild(el);
+      requestAnimationFrame(() => el.classList.add('in'));
+      const close = r => {
+        if (dialogOpen !== close) return;
+        dialogOpen = null; el.classList.remove('in');
+        setTimeout(() => el.remove(), 220);
+        resolve(r);
+      };
+      dialogOpen = close;
+      el.querySelector('.sheet-bg').onclick = () => close(false);
+      el.querySelectorAll('[data-r]').forEach(b => b.onclick = () => close(b.dataset.r === '1'));
+      el.querySelector(cancel ? '[data-r="0"]' : '[data-r="1"]').focus();
+    });
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && dialogOpen) dialogOpen(false); });
+
+  // Bouton retour d'Android (et du navigateur) : il revient en arrière dans l'app au lieu de la fermer.
+  // Chaque écran secondaire déclare son « retour » ; on garde une entrée d'historique tant qu'il y en a un.
+  let backHandler = null, backPushed = false, ignorePop = false;
+  function setBack(fn) {
+    backHandler = fn;
+    if (fn && !backPushed) { history.pushState({ talking: 1 }, ''); backPushed = true; }
+    else if (!fn && backPushed) { backPushed = false; ignorePop = true; history.back(); }
+  }
+  window.addEventListener('popstate', () => {
+    if (ignorePop) { ignorePop = false; return; }
+    backPushed = false;
+    if (dialogOpen) { dialogOpen(false); history.pushState({ talking: 1 }, ''); backPushed = true; return; }
+    const h = backHandler;
+    if (h) { history.pushState({ talking: 1 }, ''); backPushed = true; h(); }
+  });
+
   // ---------- navigation ----------
   function showTabs(active) {
+    if (active) setBack(active === 'home' ? null : Home);
     $tabs.hidden = !active;
     document.body.classList.toggle('with-tabs', !!active);
     $tabs.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.tab === active));
@@ -275,6 +323,7 @@
   // ================= ONBOARDING =================
   function Welcome() {
     showTabs(null);
+    setBack(null);
     render(`
       <section class="screen welcome">
         <p class="wordmark">talking<i>.</i></p>
@@ -327,15 +376,19 @@
       for (const [k, v] of Object.entries(o.w)) n[k] = (n[k] || 0) + v;
       setTimeout(() => Quiz(i + 1, n), 140);
     });
-    on('#back', 'click', () => {
+    const goBack = () => {
+      if (i === 0) { state.profile ? Profile() : Welcome(); return; }
       const hist = need.__hist.slice(); const last = hist.pop() || {};
       const n = Object.assign({}, need, { __hist: hist });
       for (const [k, v] of Object.entries(last)) n[k] -= v;
       Quiz(i - 1, n);
-    });
+    };
+    on('#back', 'click', goBack);
+    setBack(goBack);
   }
 
   function Spin(need) {
+    setBack(() => { });
     const ans = [null, null, null];
     render(`
       <section class="screen">
@@ -358,6 +411,7 @@
   }
 
   function Goal(need, spin) {
+    setBack(() => { });
     render(`
       <section class="screen">
         ${qhead(QUIZ.length + 1, false)}
@@ -369,6 +423,7 @@
   }
 
   function Setup(need, spin, goal) {
+    setBack(() => { });
     render(`
       <section class="screen">
         ${qhead(QUIZ.length + 2, false)}
@@ -419,6 +474,7 @@
 
   function Plan(first) {
     showTabs(first ? null : 'profile');
+    if (first) setBack(() => { });
     const p = state.profile; const f = p.focus;
     const goal = GOALS.find(g => g.id === p.goal);
     const weeks = [
@@ -452,6 +508,7 @@
       </section>`);
     on('#start', 'click', () => Session());
     on('#back', 'click', Profile);
+    if (!first) setBack(Profile);
   }
 
   // ================= ACCUEIL =================
@@ -547,6 +604,7 @@
     wireScale('anx', v => { anx = v; check(); }); wireScale('ok', v => { ok = v; check(); });
     function check() { $('#save').disabled = anx === null || ok === null; }
     on('#cancel', 'click', Home);
+    setBack(Home);
     on('#save', 'click', () => {
       Object.assign(m, { status: 'done', anx, ok, note: $('#note').value.trim(), doneOn: today() });
       state.progress.xp += 40; bump('assurance', 3); bump('smalltalk', 1);
@@ -578,6 +636,7 @@
         ${opts(['Pas eu l\'occasion', 'J\'ai eu trop peur', 'J\'ai oublié'], 'r')}
       </section>`);
     on('#cancel', 'click', Home);
+    setBack(Home);
     on('.opt', 'click', e => {
       const r = ['occasion', 'peur', 'oubli'][+e.currentTarget.dataset.r];
       Object.assign(m, { status: 'skipped', reason: r, doneOn: today() });
@@ -620,7 +679,7 @@
         <div class="footer-cta"><button class="btn primary" id="commit" disabled>Je m'engage</button></div>
       </div>
       ${S ? '' : '<button class="btn ghost" id="cancel">Annuler</button>'}`;
-    if (S) { render(frame(S, html)); startClock(S); wireQuit(); } else { showTabs(null); render(`<section class="screen">${html}</section>`); }
+    if (S) { render(frame(S, html)); startClock(S); wireQuit(); } else { showTabs(null); render(`<section class="screen">${html}</section>`); setBack(after); }
     const check = () => { $('#commit').disabled = !chosen || predAnx === null || predOk === null || $('#plan').value.trim().length < 8; };
     on('#mopts .opt', 'click', e => {
       chosen = choices[+e.currentTarget.dataset.k];
@@ -675,10 +734,24 @@
     tick(); clockTimer = setInterval(tick, 1000);
   }
   function wireQuit() {
-    on('#quit', 'click', () => { if (confirm('Quitter la séance ?')) { stopAudio(); clearInterval(clockTimer); save(); Home(); } });
+    on('#quit', 'click', askQuit);
+    setBack(askQuit);
   }
+  async function askQuit() {
+    const solo = currentSession && currentSession.solo;
+    const ok = await dialog({
+      title: solo ? 'Arrêter l\'exercice ?' : 'Quitter la séance ?',
+      body: solo ? 'Tu pourras le reprendre quand tu veux.' : 'Ce que tu as fait dans cette séance ne comptera pas pour ta série du jour.',
+      confirm: 'Quitter', cancel: solo ? 'Continuer' : 'Continuer la séance', danger: true, icon: 'x',
+    });
+    if (!ok) return;
+    stopAudio(); clearInterval(clockTimer); save();
+    solo ? Practice() : Home();
+  }
+  let currentSession = null;
   function next(S) { S.i++; runStep(S); }
   function runStep(S) {
+    currentSession = S;
     if (S.i >= S.steps.length) return Finish(S);
     const st = S.steps[S.i];
     if (st.type === 'mission') return MissionPlan(S, () => next(S));
@@ -970,7 +1043,7 @@
       render(`<section class="screen result"><span class="result-ic">${ic('check')}</span><h2 class="title">Bien joué.</h2>
         <p class="lead">${S.total ? `${S.correct} bonne${S.correct > 1 ? 's' : ''} réponse${S.correct > 1 ? 's' : ''} sur ${S.total}.` : 'Exercice terminé.'}</p>
         <div class="footer-cta"><button class="btn primary" id="b">Continuer</button></div></section>`);
-      on('#b', 'click', Practice); return;
+      on('#b', 'click', Practice); setBack(Practice); return;
     }
     const before = streakAlive();
     markDay(Math.max(1, Math.round(secs / 60)));
@@ -987,6 +1060,7 @@
         <div class="footer-cta"><button class="btn primary" id="home">Retour à l'accueil</button></div>
       </section>`);
     on('#home', 'click', Home);
+    setBack(Home);
   }
 
   // ================= ENTRAÎNEMENT LIBRE =================
@@ -1016,7 +1090,7 @@
       if (a === 'speak') solo([{ type: 'speak', prompt: pick(PROMPTS) }]);
       if (a === 'recall') {
         const seen = state.progress.lessonsDone.map(lessonById).filter(Boolean);
-        if (!seen.length) { alert('Fais d\'abord une leçon : les révisions portent sur ce que tu as déjà vu.'); return; }
+        if (!seen.length) { dialog({ title: 'Rien à réviser pour l\'instant', body: 'Les révisions portent sur les leçons que tu as déjà vues. Fais d\'abord ta séance du jour.', confirm: 'Compris', icon: 'recall' }); return; }
         solo(shuffle(seen).slice(0, 5).map(l => ({ type: 'recall', lesson: l })));
       }
       if (a === 'mission') { if (pendingMission()) Home(); else MissionPlan(null, Home); }
@@ -1055,8 +1129,12 @@
     if (isNative()) on('#apk', 'click', () => runUpdate(msg => { const st = $('#apkst'); if (st) st.textContent = msg; }));
     on('#plan', 'click', () => Plan(false));
     on('#src', 'click', Sources);
-    on('#retake', 'click', () => { if (confirm('Refaire le test ? Ta progression sera réinitialisée.')) Quiz(0, { __hist: [] }); });
-    on('#reset', 'click', () => { if (confirm('Effacer toute ta progression ?')) { state = fresh(); save(); Welcome(); } });
+    on('#retake', 'click', async () => {
+      if (await dialog({ title: 'Refaire le test ?', body: 'Ton profil sera recalculé et ta progression remise à zéro : série, leçons, défis et mesures.', confirm: 'Refaire le test', cancel: 'Annuler', danger: true, icon: 'refresh' })) Quiz(0, { __hist: [] });
+    });
+    on('#reset', 'click', async () => {
+      if (await dialog({ title: 'Tout effacer ?', body: 'Toutes tes données seront supprimées de ce téléphone. Impossible de revenir en arrière.', confirm: 'Tout effacer', cancel: 'Annuler', danger: true, icon: 'trash' })) { state = fresh(); save(); Welcome(); }
+    });
   }
   function sparkline(vals) {
     const v = vals.slice(-20); if (v.length < 2) return '';
@@ -1089,6 +1167,7 @@
         <p class="note disclaimer">${esc(DISCLAIMER)}</p>
       </section>`);
     on('#b', 'click', Profile);
+    setBack(Profile);
   }
 
   // ---------- démarrage ----------
