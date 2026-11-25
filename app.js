@@ -361,7 +361,7 @@
       await dialog({ title: 'Rappel enregistré, mais non programmé', body: 'Android a refusé de programmer les notifications. Réessaie dans un instant, et dis-le-moi si ça continue.', confirm: 'Compris', icon: 'bell' });
       return true;
     }
-    const test = await dialog({ title: `Rappel activé à ${hhmm({ h, m })}`, body: 'Tu le recevras chaque jour à cette heure, à quelques minutes près (Android regroupe les alarmes pour économiser la batterie). Tu veux vérifier tout de suite ?', confirm: 'Envoyer une notification de test', cancel: 'Pas besoin', icon: 'bell' });
+    const test = await dialog({ title: `Rappel activé à ${hhmm({ h, m })}`, body: 'Tu le recevras chaque jour à cette heure. Tu veux vérifier tout de suite ?', confirm: 'Envoyer une notification de test', cancel: 'Pas besoin', icon: 'bell' });
     if (test) await sendTestNotification();
     return true;
   }
