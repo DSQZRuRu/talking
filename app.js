@@ -216,6 +216,47 @@
     };
   }
 
+  // ---------- journal quotidien et semaines (pour le bilan) ----------
+  function logDay(patch) {
+    const t = today(); state.log = state.log || {};
+    const d = state.log[t] = state.log[t] || { correct: 0, total: 0, lessons: [] };
+    if (patch.correct) d.correct += patch.correct;
+    if (patch.total) d.total += patch.total;
+    if (patch.lesson && !d.lessons.includes(patch.lesson)) d.lessons.push(patch.lesson);
+  }
+  // Semaine = du lundi au dimanche ; la clé est la date du lundi.
+  const weekOf = k => { const d = new Date(k + 'T12:00:00'); return addDays(k, -((d.getDay() + 6) % 7)); };
+  const weekDays = wk => [...Array(7)].map((_, i) => addDays(wk, i));
+  // Photo des compétences au début de chaque semaine, pour mesurer la progression.
+  function snapWeek() {
+    if (!state.profile) return;
+    state.weekSnaps = state.weekSnaps || {};
+    const wk = weekOf(today());
+    if (!state.weekSnaps[wk]) { state.weekSnaps[wk] = Object.assign({}, state.profile.levels); save(); }
+  }
+  function weekStats(wk) {
+    const days = weekDays(wk), pr = state.progress, log = state.log || {};
+    const active = days.filter(d => (pr.days[d] || 0) > 0);
+    const minutes = days.reduce((a, d) => a + (pr.days[d] || 0), 0);
+    let correct = 0, total = 0; const lessons = [];
+    days.forEach(d => { const l = log[d]; if (l) { correct += l.correct || 0; total += l.total || 0; (l.lessons || []).forEach(x => lessons.includes(x) || lessons.push(x)); } });
+    const ms = state.missions.filter(m => m.doneOn && days.includes(m.doneOn) && m.status !== 'planned');
+    const done = ms.filter(m => m.status === 'done');
+    const gaps = done.filter(m => m.ok != null && m.predOk != null).map(m => m.ok - m.predOk);
+    const fill = pr.fillerHistory.filter(h => days.includes(h.d)).map(h => h.perMin);
+    const startLv = (state.weekSnaps || {})[wk] || (weekOf(state.profile.createdAt) === wk ? state.profile.start : null);
+    const endLv = (state.weekSnaps || {})[addDays(wk, 7)] || state.profile.levels;
+    return { wk, days, active, minutes, correct, total, lessons, done, skipped: ms.length - done.length,
+      gap: gaps.length ? avg(gaps) : null, fill: fill.length ? avg(fill) : null, startLv, endLv };
+  }
+  // Bilan à proposer : la semaine écoulée, si elle a eu de l'activité et n'a pas encore été vue.
+  function pendingReview() {
+    if (!state.profile) return null;
+    const last = addDays(weekOf(today()), -7);
+    if (state.reviewSeen === last) return null;
+    return weekStats(last).active.length ? last : null;
+  }
+
   // ---------- répétition espacée ----------
   function srsSchedule(id) { if (!state.srs[id]) state.srs[id] = { box: 0, due: addDays(today(), SRS_DAYS[0]) }; }
   function srsAnswer(id, ok) {
@@ -329,7 +370,9 @@
       for (let d = 0; d < 14; d++) {
         const at = new Date(now); at.setDate(now.getDate() + d); at.setHours(r.h, r.m, 0, 0);
         if (d === 0 && (doneToday || at <= now)) continue;
-        const body = pm && d <= 1 ? 'Et ton défi, ça a donné quoi ? Viens comparer avec ta prédiction.' : REMINDERS[(start + d) % REMINDERS.length];
+        const body = pm && d <= 1 ? 'Et ton défi, ça a donné quoi ? Viens comparer avec ta prédiction.'
+          : at.getDay() === 1 ? 'Ton bilan de la semaine est prêt. Viens voir tes progrès.'
+          : REMINDERS[(start + d) % REMINDERS.length];
         list.push({ id: REM_IDS[d], title: state.profile && state.profile.name ? `${state.profile.name}, c'est l'heure` : 'Talking', body, schedule: { at, allowWhileIdle: true }, smallIcon: 'ic_stat_talking', iconColor: '#3346FF' });
       }
       if (list.length) await LN.schedule({ notifications: list });
@@ -633,11 +676,13 @@
   // ================= ACCUEIL =================
   function Home() {
     showTabs('home');
+    snapWeek();
     const p = state.profile, pr = state.progress;
     const doneToday = (pr.days[today()] || 0) > 0;
-    const week = [...Array(7)].map((_, i) => {
-      const d = new Date(); d.setDate(d.getDate() - (6 - i)); const k = dayKey(d);
-      return { l: 'DLMMJVS'[d.getDay()], n: d.getDate(), on: !!pr.days[k], t: k === today() };
+    // Semaine calendaire (lundi → dimanche), comme le bilan et l'objectif de la semaine.
+    const week = weekDays(weekOf(today())).map(k => {
+      const d = new Date(k + 'T12:00:00');
+      return { l: 'DLMMJVS'[d.getDay()], n: d.getDate(), on: (pr.days[k] || 0) > 0, t: k === today(), f: k > today() };
     });
     const lesson = nextLesson();
     const pm = pendingMission();
@@ -657,7 +702,9 @@
           <div><p class="date">${esc(dateStr)}</p><h1 class="display sm">${greeting()}${p.name ? `, ${esc(p.name)}` : ''}.</h1></div>
           <div class="streak ${streakAlive() ? 'lit' : ''}" title="Jours d'affilée">${ic('flame')}<b>${streakAlive()}</b></div>
         </header>
-        <div class="week">${week.map(d => `<div class="${d.on ? 'on' : ''} ${d.t ? 'is-today' : ''}"><span>${d.l}</span><i>${d.on ? ic('check') : d.n}</i></div>`).join('')}</div>
+        <div class="week">${week.map(d => `<div class="${d.on ? 'on' : ''} ${d.t ? 'is-today' : ''} ${d.f ? 'future' : ''}"><span>${d.l}</span><i>${d.on ? ic('check') : d.n}</i></div>`).join('')}</div>
+        <p class="wk-goal">${(() => { const k = weekStats(weekOf(today())).active.length, g = state.weekGoal || 5; return k >= g ? `${ic('check')}Objectif de la semaine atteint : ${k}/${g} jours` : `${k}/${g} jours cette semaine`; })()}</p>
+        ${pendingReview() ? `<button class="review-cta" id="review"><span class="row-ic">${ic('spark')}</span><span class="row-txt"><b>Ton bilan de la semaine est prêt</b><small>${weekRange(pendingReview())}</small></span>${ic('chev')}</button>` : ''}
         ${pm ? missionCard(pm) : ''}
         <article class="today ${doneToday ? 'done' : ''}">
           <div class="today-top">${label(SKILL_IC[lesson.skill], doneToday ? 'Séance faite aujourd\'hui' : `Séance du jour · ~${p.minutes} min`)}${evTag(lesson.level)}</div>
@@ -673,6 +720,7 @@
       </section>`);
     on('#go', 'click', () => Session());
     on('#prep', 'click', () => EventPrep());
+    on('#review', 'click', () => WeekReview(pendingReview()));
     on('#mdone', 'click', () => MissionReport(pendingMission()));
     on('#mskip', 'click', () => MissionSkip(pendingMission()));
   }
@@ -920,7 +968,7 @@
     on('#p', 'click', () => redraw(c - 1));
     on('#n', 'click', () => {
       if (!last) return redraw(c + 1);
-      if (!state.progress.lessonsDone.includes(L.id)) { state.progress.lessonsDone.push(L.id); bump(L.skill, 2); }
+      if (!state.progress.lessonsDone.includes(L.id)) { state.progress.lessonsDone.push(L.id); bump(L.skill, 2); logDay({ lesson: L.id }); }
       srsSchedule(L.id); S.xp += 10; next(S);
     });
   }
@@ -1159,6 +1207,7 @@
   function Finish(S) {
     clearInterval(clockTimer); stopAudio();
     const secs = Math.round((Date.now() - S.t0) / 1000);
+    logDay({ correct: S.correct, total: S.total });
     if (S.solo) {
       state.progress.xp += S.xp; save();
       render(`<section class="screen result"><span class="result-ic">${ic('check')}</span><h2 class="title">Bien joué.</h2>
@@ -1184,6 +1233,66 @@
     setBack(Home);
     scheduleReminders();
     if (isNative() && LN && !state.reminder) setTimeout(() => ReminderSheet(), 700);
+  }
+
+  // ================= BILAN DE LA SEMAINE =================
+  const fmtDay = (k, opt) => new Date(k + 'T12:00:00').toLocaleDateString('fr-FR', opt);
+  function weekRange(wk) {
+    const end = addDays(wk, 6);
+    const sameMonth = wk.slice(0, 7) === end.slice(0, 7);
+    return `du ${fmtDay(wk, sameMonth ? { day: 'numeric' } : { day: 'numeric', month: 'long' })} au ${fmtDay(end, { day: 'numeric', month: 'long' })}`;
+  }
+  function WeekReview(wk, from = 'home') {
+    showTabs(null);
+    const back = from === 'profile' ? Profile : Home;
+    const cur = weekOf(today()), isCurrent = wk === cur, isLatest = wk === addDays(cur, -7);
+    if (!isCurrent) { state.reviewSeen = state.reviewSeen && state.reviewSeen > wk ? state.reviewSeen : wk; save(); }
+    const st = weekStats(wk), prev = weekStats(addDays(wk, -7));
+    const n = st.active.length, goal = state.weekGoal || 5;
+    const headline = n === 0 ? 'Pas d\'entraînement cette semaine-là.' : n >= goal ? 'Objectif atteint, bravo.' : n >= 3 ? 'Une bonne semaine.' : 'Une semaine en pointillés.';
+    const pct = st.total ? Math.round(st.correct / st.total * 100) : null;
+    const fillTrend = st.fill != null && prev.fill != null ? st.fill - prev.fill : null;
+    const sgn = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1).replace('.', ',');
+    const deltas = st.startLv ? Object.keys(SKILLS).map(k => [k, (st.endLv[k] || 0) - (st.startLv[k] || 0)]) : null;
+    const notes = st.done.filter(m => m.note).slice(-2);
+    const focus = weakest()[0];
+    const first = Object.keys(state.weekSnaps || {}).sort()[0] || weekOf(state.profile.createdAt);
+    render(`
+      <section class="screen review">
+        <button class="link-back" id="back">${ic('left')}${from === 'profile' ? 'Profil' : 'Accueil'}</button>
+        <div class="wk-nav"><button class="icon-btn" id="prevw" aria-label="Semaine précédente" ${wk <= first ? 'disabled' : ''}>${ic('left')}</button>
+          <div>${label('spark', isCurrent ? 'Semaine en cours' : 'Bilan de la semaine')}<p class="wk-range">${weekRange(wk)}</p></div>
+          <button class="icon-btn" id="nextw" aria-label="Semaine suivante" ${isCurrent ? 'disabled' : ''}>${ic('right')}</button></div>
+        <h2 class="title">${headline}</h2>
+        <div class="wk-hero">
+          <div class="wk-big"><b>${n}</b><span>jour${n > 1 ? 's' : ''} sur 7<br>objectif ${goal}</span></div>
+          <div class="wk-dots">${st.days.map(d => `<div class="${(state.progress.days[d] || 0) > 0 ? 'on' : ''} ${d === today() ? 'is-today' : ''}"><i>${(state.progress.days[d] || 0) > 0 ? ic('check') : ''}</i><span>${'LMMJVSD'[(new Date(d + 'T12:00:00').getDay() + 6) % 7]}</span></div>`).join('')}</div>
+          <p>${st.minutes} minute${st.minutes > 1 ? 's' : ''} d'entraînement${prev.active.length ? `, contre ${prev.minutes} la semaine d'avant` : ''}.</p>
+        </div>
+        <div class="wk-grid">
+          <div><b>${pct == null ? '–' : pct + '<small> %</small>'}</b><span>de bonnes réponses${st.total ? ` (${st.correct}/${st.total})` : ''}</span></div>
+          <div><b>${st.done.length}</b><span>défi${st.done.length > 1 ? 's' : ''} réussi${st.done.length > 1 ? 's' : ''}${st.skipped ? `, ${st.skipped} non fait${st.skipped > 1 ? 's' : ''}` : ''}</span></div>
+          <div><b class="${st.gap > 0 ? 'pos' : ''}">${st.gap == null ? '–' : sgn(st.gap)}</b><span>${st.gap == null ? 'pas encore de bilan de défi' : 'résultat des défis par rapport à tes prédictions'}</span></div>
+          <div><b class="${fillTrend != null && fillTrend < 0 ? 'pos' : ''}">${st.fill == null ? '–' : st.fill.toFixed(1).replace('.', ',')}</b><span>${st.fill == null ? 'pas d\'exercice oral' : `« euh » par minute${fillTrend != null ? ` (${sgn(fillTrend)} vs semaine d'avant)` : ''}`}</span></div>
+        </div>
+        ${notes.length ? `<h3 class="section">Ce que tu as remarqué</h3>${notes.map(m => `<div class="bubble them">« ${esc(m.note)} »</div>`).join('')}` : ''}
+        ${deltas && deltas.some(([, d]) => d) ? `<h3 class="section">Tes compétences cette semaine</h3>${skillRows(state.profile.levels, { delta: Object.fromEntries(deltas) })}` : ''}
+        ${st.lessons.length ? `<h3 class="section">Leçons apprises</h3><div class="group">${st.lessons.map(lessonById).filter(Boolean).map(l => row(`data-l="${l.id}"`, SKILL_IC[l.skill], esc(l.title), evTag(l.level))).join('')}</div>` : ''}
+        ${isCurrent || isLatest ? `
+          <h3 class="section">La semaine ${isCurrent ? 'en cours' : 'qui vient'}</h3>
+          <div class="callout"><b>Priorité : ${SKILLS[focus].name.toLowerCase()}</b><p>${esc(SKILLS[focus].desc)} Tes prochaines séances s'y concentrent.</p></div>
+          <p class="field-label">Ton objectif de jours d'entraînement</p>
+          <div class="seg" id="wgoal">${[3, 5, 7].map(g => `<button data-g="${g}" class="${g === goal ? 'on' : ''}">${g} jours</button>`).join('')}</div>
+          <p class="note">Un objectif réaliste que tu tiens vaut mieux qu'un objectif ambitieux que tu abandonnes.</p>` : ''}
+      </section>`);
+    on('#back', 'click', back); setBack(back);
+    on('#prevw', 'click', () => WeekReview(addDays(wk, -7), from));
+    on('#nextw', 'click', () => WeekReview(addDays(wk, 7), from));
+    on('[data-l]', 'click', e => { showTabs(null); runStep({ steps: [{ type: 'lesson', lesson: lessonById(e.currentTarget.dataset.l) }], i: 0, t0: Date.now(), correct: 0, total: 0, xp: 0, solo: true }); });
+    on('#wgoal button', 'click', e => {
+      state.weekGoal = +e.currentTarget.dataset.g; save();
+      $app.querySelectorAll('#wgoal button').forEach(b => b.classList.toggle('on', b === e.currentTarget));
+    });
   }
 
   // ================= AVANT UN ÉVÉNEMENT =================
@@ -1352,6 +1461,7 @@
           ${isNative()
             ? `<button class="row" id="apk"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>${latestRelease && newer(latestRelease.version, BUILD.version) ? `Mettre à jour vers la ${esc(latestRelease.version)}` : 'Réinstaller la dernière version'}</b><small id="apkst">Installée : ${esc(BUILD.version)}${latestRelease ? ` · dernière : ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</button>`
             : `<a class="row" id="apk" href="${esc(latestRelease ? latestRelease.url : APK_URL)}"><span class="row-ic">${ic('download')}</span><span class="row-txt"><b>Télécharger l'app Android</b><small>Fichier APK${latestRelease ? ` · version ${esc(latestRelease.version)}` : ''}</small></span>${ic('chev')}</a>`}
+          ${row('id="weeks"', 'spark', 'Bilans de la semaine', 'Ta semaine en cours et les précédentes')}
           ${row('id="remind"', 'bell', 'Rappel quotidien', !isNative() ? 'Disponible dans l\'app Android' : state.reminder && state.reminder.on ? `Tous les jours à ${hhmm(state.reminder)}` : 'Désactivé')}
           ${row('id="plan"', 'map', 'Mon plan', 'Profil de départ et 4 semaines')}
           ${row('id="src"', 'library', 'Sources et méthode', 'Toutes les études citées')}
@@ -1374,6 +1484,7 @@
       if (!isNative()) { dialog({ title: 'Rappels dans l\'app Android', body: 'Les notifications quotidiennes fonctionnent dans l\'app installée sur ton téléphone. Télécharge-la depuis cette page.', confirm: 'Compris', icon: 'bell' }); return; }
       ReminderSheet(Profile);
     });
+    on('#weeks', 'click', () => WeekReview(weekOf(today()), 'profile'));
     on('#plan', 'click', () => Plan(false));
     on('#src', 'click', Sources);
     on('#retake', 'click', async () => {
