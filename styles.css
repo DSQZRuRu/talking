@@ -532,3 +532,9 @@ html { overscroll-behavior-y: none; }
 /* ---------- compte ---------- */
 .form-err { margin: 10px 2px 0; font-size: .88rem; font-weight: 500; color: var(--bad); }
 .input.code { font: 800 1.6rem/1 var(--disp); letter-spacing: .3em; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ---------- compteur de « euh » en direct ---------- */
+.hes-live { width: fit-content; margin: 4px auto 0; padding: 6px 12px; border-radius: 99px; background: var(--surface); font-size: .85rem; color: var(--ink-2); transition: background .3s; }
+.hes-live b { font: 800 1rem/1 var(--disp); color: var(--ink); font-variant-numeric: tabular-nums; }
+.hes-live.pop { animation: hespop .5s var(--ease); }
+@keyframes hespop { 0% { background: var(--sun); transform: scale(1.08); } 100% { background: var(--surface); transform: none; } }

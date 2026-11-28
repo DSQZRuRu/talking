@@ -1198,9 +1198,10 @@
   }
 
   // ---- Parle 60 s ----
-  let rec = null, speakTimer = null, mediaRec = null, mediaStream = null;
+  let rec = null, speakTimer = null, mediaRec = null, mediaStream = null, audioCtx = null;
   function stopAudio() {
     clearInterval(speakTimer);
+    if (audioCtx) { try { audioCtx.close(); } catch { } audioCtx = null; }
     if (rec) { try { rec.onend = null; rec.stop(); } catch { } rec = null; }
     if (mediaRec && mediaRec.state !== 'inactive') { try { mediaRec.stop(); } catch { } }
     if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
@@ -1224,8 +1225,10 @@
   function StepSpeak(S, st) {
     const NSR = nativeSpeechClass();
     const SR = NSR || window.SpeechRecognition || window.webkitSpeechRecognition;
-    // Sur Android, le moteur vocal et l'enregistreur se disputent le micro : on privilégie l'analyse vocale.
-    const canRec = !NSR && !!(navigator.mediaDevices && window.MediaRecorder);
+    // Le micro est aussi écouté directement par l'app : détection acoustique des « euh » (que les
+    // moteurs de transcription suppriment) et enregistrement pour la réécoute.
+    const canCapture = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && (window.AudioContext || window.webkitAudioContext) && window.TalkingHesitation);
+    const hes = { det: null, available: false, silenced: false };
     render(frame(S, `
       ${label('mic', 'Parle 60 secondes')}
       <h2 class="title">${esc(st.prompt.t)}</h2>
@@ -1238,6 +1241,7 @@
         <p class="note center" id="mhint">Appuie pour commencer. Quand tu cherches tes mots, fais une pause plutôt qu'un « euh ».</p>
       </div>
       ${SR ? '' : '<p class="note center">Reconnaissance vocale indisponible sur ce navigateur (essaie Chrome, Edge ou Safari) : tu compteras tes « euh » toi-même.</p>'}
+      <p class="hes-live" id="heslive" hidden>« euh » repérés : <b id="hescount">0</b></p>
       <p id="live" class="live"></p>
       <div id="fb"></div>
       <button class="btn ghost" id="skip">Passer cet exercice</button>`));
@@ -1252,11 +1256,17 @@
       $('#mic').classList.remove('rec'); $('#wave').classList.remove('on'); $('#mic').disabled = true; $('#micic').innerHTML = ic('check');
       $('#mhint').textContent = 'Terminé.';
       $('#skip')?.remove();
+      if (hes.det) hes.det.finish();
+      // Micro muet pendant tout l'exercice : le téléphone ne partage pas le micro avec la transcription.
+      if (hes.det && hes.det.maxAbs < 1e-4) { hes.available = false; hes.silenced = true; }
+      if (audioCtx) { try { audioCtx.close(); } catch { } audioCtx = null; }
       const afterAudio = url => {
         if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+        if (hes.silenced) url = null;
         const spoken = (transcript + ' ' + interim).trim();
-        if (SR && spoken.split(/\s+/).length >= 5) speakResult(S, spoken, secs, url);
-        else manualResult(S, url);
+        const h = { available: hes.available, count: hes.det ? hes.det.count : 0, silenced: hes.silenced };
+        if (SR && spoken.split(/\s+/).length >= 5) speakResult(S, spoken, secs, url, h);
+        else manualResult(S, url, h, secs);
       };
       if (mediaRec && mediaRec.state !== 'inactive') {
         mediaRec.onstop = () => afterAudio(chunks.length ? URL.createObjectURL(new Blob(chunks, { type: mediaRec.mimeType || 'audio/webm' })) : null);
@@ -1268,13 +1278,34 @@
       if (running) { finish(); return; }
       running = true; startedAt = Date.now(); buzz(10);
       $('#mic').classList.add('rec'); $('#wave').classList.add('on'); $('#micic').innerHTML = ic('stop'); $('#mhint').textContent = 'Appuie pour arrêter.';
-      if (canRec) {
+      // On ouvre notre écoute AVANT la transcription : si le téléphone ne sait pas partager le micro,
+      // c'est notre écoute qui devient muette (détectée ensuite), pas la transcription.
+      if (canCapture) {
         try {
-          mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          mediaRec = new MediaRecorder(mediaStream); chunks = [];
-          mediaRec.ondataavailable = e => e.data.size && chunks.push(e.data);
-          mediaRec.start();
-        } catch { mediaRec = null; }
+          mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
+          const AC = window.AudioContext || window.webkitAudioContext;
+          audioCtx = new AC();
+          const src = audioCtx.createMediaStreamSource(mediaStream);
+          const proc = audioCtx.createScriptProcessor(2048, 1, 1);
+          hes.det = new window.TalkingHesitation.HesitationDetector(audioCtx.sampleRate);
+          hes.available = true;
+          hes.det.onEvent = n => { const c = $('#hescount'); if (c) { c.textContent = n; c.parentElement.classList.remove('pop'); void c.offsetWidth; c.parentElement.classList.add('pop'); } };
+          proc.onaudioprocess = e => { if (running) hes.det.push(e.inputBuffer.getChannelData(0)); };
+          src.connect(proc); proc.connect(audioCtx.destination);
+          $('#heslive').hidden = false;
+          if (window.MediaRecorder) {
+            mediaRec = new MediaRecorder(mediaStream); chunks = [];
+            mediaRec.ondataavailable = e => e.data.size && chunks.push(e.data);
+            mediaRec.start();
+          }
+          // Au bout de 3 s, si on ne reçoit que du silence absolu, le micro n'est pas partagé.
+          setTimeout(() => {
+            if (running && hes.det && hes.det.maxAbs < 1e-4) {
+              hes.available = false; hes.silenced = true; $('#heslive').hidden = true;
+              if (audioCtx) { try { audioCtx.close(); } catch { } audioCtx = null; }
+            }
+          }, 3000);
+        } catch { hes.available = false; mediaRec = null; }
       }
       if (SR) {
         rec = new SR(); rec.lang = 'fr-FR'; rec.continuous = true; rec.interimResults = true;
@@ -1318,10 +1349,19 @@
     });
   }
 
-  function speakResult(S, text, secs, url) {
+  // Fusionne les « euh » entendus (analyse du son) avec les béquilles lues dans la transcription.
+  function mergeHes(found, h) {
+    if (!h || !h.available) return found;
+    const fromText = found.euh || 0;
+    if (h.count > fromText) found.euh = h.count;
+    return found;
+  }
+  function speakResult(S, text, secs, url, h) {
     const words = text.split(/\s+/).filter(Boolean).length;
-    const { n, found } = countFillers(text);
-    const foundTxt = Object.keys(found).length ? `Repérés : ${Object.entries(found).map(([k, v]) => `« ${esc(k)} » ×${v}`).join(', ')}.` : 'Aucune béquille repérée.';
+    const found = mergeHes(countFillers(text).found, h);
+    const n = Object.values(found).reduce((a, b) => a + b, 0);
+    const foundTxt = (Object.keys(found).length ? `Repérés : ${Object.entries(found).filter(([, v]) => v).map(([k, v]) => `« ${esc(k)} » ×${v}`).join(', ')}.` : 'Aucune béquille repérée.')
+      + (h && h.available ? ' Les « euh » sont repérés à l\'écoute de ta voix.' : h && h.silenced ? ' Sur ce téléphone, les « euh » ne peuvent pas être repérés pendant la transcription.' : '');
     if (secs < 20) {
       S.xp += 10;
       $('#fb').innerHTML = `<div class="stats">${stat(words, 'mots')}${stat(n, 'béquilles')}${stat(secs + '<small>s</small>', 'durée')}</div>
@@ -1342,12 +1382,23 @@
       <div class="stats">${stat(words, 'mots')}${stat(perMin, 'béquilles / min')}${stat(wpm, 'mots / min')}</div>
       ${feedback(true, prev === null ? 'Première mesure enregistrée' : better ? 'Mieux que ta moyenne récente' : 'Mesure enregistrée',
         `${foundTxt} ${prev === null ? 'Les prochaines seront comparées à celle-ci.' : better ? `Ta moyenne récente était de ${prev.toFixed(1)} par minute.` : `Ta moyenne récente : ${prev.toFixed(1)} par minute. L'objectif est de progresser par rapport à toi, pas d'atteindre zéro.`}`,
-        `<p class="fb-meta">${pace} Chiffres indicatifs : la reconnaissance vocale rate parfois des « euh ».</p>`)}
+        `<p class="fb-meta">${pace} Chiffres indicatifs : les « euh » très brefs (moins d'un tiers de seconde) peuvent passer inaperçus.</p>`)}
       ${playbackBlock(url)}${continueBtn()}`;
     if (url) wirePlayback();
     on('#n', 'click', () => next(S));
   }
-  function manualResult(S, url) {
+  function manualResult(S, url, h, secs) {
+    if (h && h.available && secs >= 20) {
+      const perMin = Math.round(h.count / secs * 60 * 10) / 10;
+      S.xp += 20; bump('clarte', 1); bump('assurance', 1);
+      if (h.count >= 0) state.progress.fillerHistory.push({ d: today(), perMin, wpm: 0 });
+      $('#fb').innerHTML = `<div class="stats">${stat(h.count, '« euh »')}${stat(perMin, 'par minute')}${stat(secs + '<small>s</small>', 'durée')}</div>
+        ${feedback(true, h.count ? 'Analyse de ta voix terminée' : 'Aucun « euh » repéré', `${h.count ? `${plural(h.count, 'hésitation')} repérée${h.count > 1 ? 's' : ''} à l'écoute de ta voix.` : 'Belle fluidité.'} La transcription n'est pas disponible ici, donc les « du coup » et « en fait » ne sont pas comptés.`)}
+        ${playbackBlock(url)}${continueBtn()}`;
+      if (url) wirePlayback();
+      on('#n', 'click', () => next(S));
+      return;
+    }
     $('#fb').innerHTML = `${playbackBlock(url)}
       <p class="field-label">Combien de « euh », « du coup », « en fait » as-tu remarqué&nbsp;?</p>
       <div class="seg" id="self">${['0 à 2', '3 à 5', '6 à 10', 'Plus de 10'].map((l, k) => `<button data-k="${k}">${l}</button>`).join('')}</div>`;
